@@ -1,0 +1,17 @@
+{
+  "name": "ZARVON — Marketplace & Muddatli To'lov",
+  "short_name": "ZARVON",
+  "description": "Ko'p sotuvchili marketplace va shaffof muddatli to'lov platformasi",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#FFFFFF",
+  "theme_color": "#17365D",
+  "icons": [
+    {
+      "src": "/static/icons/zarvon-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

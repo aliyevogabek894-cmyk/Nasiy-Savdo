@@ -1,0 +1,246 @@
+"""Comprehensive automated acceptance, compliance, RBAC, security & concurrency tests (Section 23)."""
+import io
+import uuid
+import openpyxl
+from django.core.exceptions import ValidationError
+from django.core.files.uploadedfile import SimpleUploadedFile
+from django.test import TestCase
+from django.utils import timezone
+from rest_framework.test import APIClient
+
+from apps.accounts.models import MakerCheckerRequest, User, UserRole
+from apps.catalog.models import Brand, Category, Product, ProductStatus
+from apps.commerce.models import OrderItem
+from apps.finance.models import BankPartner, CustomerConsent, CustomerLimit, InstallmentPlan, WebhookEvent
+from apps.governance.models import BhmValue, ComplianceRuleVersion
+from apps.inventory.models import StockLevel, Warehouse
+from apps.sellers.models import SellerInvitation, Store
+
+
+class ZarvonMasterSpecificationTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.bhm = BhmValue.objects.create(amount_uzs=440_000, effective_from=timezone.now().date(), is_active=True)
+        self.rule = ComplianceRuleVersion.get_active()
+
+        self.super_admin = User.objects.create_user("+998909000001", "Pass1234!", full_name="Super Admin", role=UserRole.SUPER_ADMIN, mfa_enabled=True)
+        self.mkt_admin = User.objects.create_user("+998909000002", "Pass1234!", full_name="Market Admin", role=UserRole.MARKETPLACE_ADMIN, mfa_enabled=True)
+        self.auditor = User.objects.create_user("+998909000003", "Pass1234!", full_name="Auditor", role=UserRole.AUDITOR)
+        self.content_mgr = User.objects.create_user("+998909000004", "Pass1234!", full_name="Content Mgr", role=UserRole.CONTENT_MANAGER)
+
+        self.seller_a = User.objects.create_user("+998902000001", "Pass1234!", full_name="Seller A", role=UserRole.SELLER_OWNER)
+        self.seller_b = User.objects.create_user("+998902000002", "Pass1234!", full_name="Seller B", role=UserRole.SELLER_OWNER)
+        self.customer = User.objects.create_user("+998901000001", "Pass1234!", full_name="Mijoz 1", role=UserRole.CUSTOMER)
+        CustomerLimit.objects.create(user=self.customer, tier="Plus", total_limit_uzs=25_000_000, used_limit_uzs=0)
+
+        self.store_a = Store.objects.create(owner=self.seller_a, legal_name="Store A MChJ", public_name="Store A", slug="store-a", official_phone="+998711111111", legal_address="Toshkent", return_address="Toshkent")
+        self.store_b = Store.objects.create(owner=self.seller_b, legal_name="Store B MChJ", public_name="Store B", slug="store-b", official_phone="+998712222222", legal_address="Toshkent", return_address="Toshkent")
+        self.wh_a = Warehouse.objects.create(store=self.store_a, name="WH A", address="Toshkent")
+
+        self.cat_phone = Category.objects.create(name="Smartfonlar", slug="smartfonlar", installment_allowed=True)
+        self.cat_realty = Category.objects.create(name="Ko‘chmas mulk", slug="kochmas-mulk", installment_allowed=False)
+        self.brand_apple = Brand.objects.create(name="Apple", slug="apple")
+
+        self.prod_a = Product.objects.create(
+            store=self.store_a, category=self.cat_phone, brand=self.brand_apple,
+            sku="APL-16-T", title="Apple iPhone 16 Titan", slug="apple-iphone-16-titan",
+            description="Original telefon", cash_price=10_000_000, status=ProductStatus.APPROVED,
+        )
+        StockLevel.objects.create(product=self.prod_a, warehouse=self.wh_a, quantity=3)
+
+        self.prod_pending = Product.objects.create(
+            store=self.store_b, category=self.cat_phone, brand=self.brand_apple,
+            sku="B-PEND-1", title="Tasdiqlanmagan Tovar", slug="tasdiqlanmagan-tovar",
+            description="Hali moderatsiyada", cash_price=2_000_000, status=ProductStatus.PENDING_REVIEW,
+        )
+        self.plan12 = InstallmentPlan.objects.create(name="12 oy", months=12, annual_markup_pct=28.0, commission_pct=2.0)
+
+    def test_compliance_guard_rejects_over_12_months_and_over_50pct_and_over_250_bhm_and_realty(self):
+        # > 12 months rejected
+        with self.assertRaises(ValidationError):
+            InstallmentPlan.objects.create(name="Bad 18m", months=18, annual_markup_pct=20.0, commission_pct=1.0)
+        # > 50% annual extra rejected
+        with self.assertRaises(ValidationError):
+            InstallmentPlan.objects.create(name="Usury 60%", months=12, annual_markup_pct=55.0, commission_pct=2.0)
+        # > 250 BHM rejected by calculator API
+        resp = self.client.post("/api/v1/finance/calculator/", {"price": 120_000_000, "months": 12}, format="json")
+        self.assertEqual(resp.status_code, 400)
+        # Prohibited category rejected
+        resp2 = self.client.post("/api/v1/finance/calculator/", {"price": 5_000_000, "months": 12, "category_installment_allowed": False}, format="json")
+        self.assertEqual(resp2.status_code, 400)
+
+    def test_rbac_and_seller_tenant_isolation_and_auditor_readonly(self):
+        # Seller B cannot edit Seller A's product
+        self.client.force_authenticate(user=self.seller_b)
+        res = self.client.patch(f"/api/v1/sellers/my-products/{self.prod_a.id}/", {"cash_price": 5_000_000}, format="json")
+        self.assertEqual(res.status_code, 403)
+
+        # Customer cannot open admin dashboard
+        self.client.force_authenticate(user=self.customer)
+        self.assertEqual(self.client.get("/api/v1/risk/dashboard/").status_code, 403)
+
+        # Auditor can read dashboard, cannot mutate
+        self.client.force_authenticate(user=self.auditor)
+        self.assertEqual(self.client.get("/api/v1/risk/dashboard/").status_code, 200)
+        self.assertEqual(self.client.post("/api/v1/sellers/invitations/", {"company_name": "X", "target_phone": "+998901112233"}, format="json").status_code, 403)
+
+        # Content manager cannot create promos (Section 33)
+        self.client.force_authenticate(user=self.content_mgr)
+        self.assertEqual(self.client.post("/api/v1/catalog/cms/", {"kind": "promo", "code": "HACK99", "title": "X"}, format="json").status_code, 403)
+
+    def test_unapproved_product_hidden_from_public_catalog_and_smart_uzbek_search(self):
+        resp = self.client.get("/api/v1/catalog/products/?q=айфон")
+        self.assertEqual(resp.status_code, 200)
+        titles = [x["title"] for x in resp.json()["results"]]
+        self.assertIn("Apple iPhone 16 Titan", titles)
+        self.assertNotIn("Tasdiqlanmagan Tovar", titles)
+
+    def test_seller_invitation_hash_and_single_use(self):
+        inv, raw = SellerInvitation.issue_invitation(company_name="Yangi", target_phone="+998907778899", target_email="", expires_hours=24, created_by=self.mkt_admin)
+        self.assertNotEqual(inv.token_hash, raw)
+        res1 = self.client.post("/api/v1/sellers/onboarding/verify-invite/", {"token": raw}, format="json")
+        self.assertEqual(res1.status_code, 200)
+
+        # Submit onboarding consumes token
+        res_sub = self.client.post(
+            "/api/v1/sellers/onboarding/submit/",
+            {
+                "token": raw, "legal_name": "Yangi MChJ", "public_name": "Yangi",
+                "representative_name": "Ali", "official_phone": "+998907778899",
+                "terms_accepted": True,
+            },
+            format="json",
+        )
+        self.assertEqual(res_sub.status_code, 201)
+        # Second verify must fail (single-use)
+        res2 = self.client.post("/api/v1/sellers/onboarding/verify-invite/", {"token": raw}, format="json")
+        self.assertEqual(res2.status_code, 400)
+
+    def test_consent_gate_oversell_prevention_price_snapshot_and_early_repayment(self):
+        self.client.force_authenticate(user=self.customer)
+        # Missing consents blocks Nasiya checkout
+        res_no_consent = self.client.post(
+            "/api/v1/commerce/checkout/",
+            {
+                "idempotency_key": "chk-noconsent",
+                "items": [{"product_id": str(self.prod_a.id), "quantity": 1}],
+                "payment_channel": "ZARVON_NASIYA",
+                "plan_id": str(self.plan12.id),
+            },
+            format="json",
+        )
+        self.assertEqual(res_no_consent.status_code, 400)
+
+        # Grant required consents
+        CustomerConsent.objects.create(user=self.customer, purpose="IDENTITY", is_granted=True)
+        CustomerConsent.objects.create(user=self.customer, purpose="CREDIT_BUREAU", is_granted=True)
+
+        # Oversell (>3 available) blocked with 409 Conflict
+        res_oversell = self.client.post(
+            "/api/v1/commerce/checkout/",
+            {
+                "idempotency_key": "chk-oversell",
+                "items": [{"product_id": str(self.prod_a.id), "quantity": 5}],
+                "payment_channel": "ZARVON_NASIYA",
+                "plan_id": str(self.plan12.id),
+            },
+            format="json",
+        )
+        self.assertEqual(res_oversell.status_code, 409)
+
+        # Valid checkout succeeds
+        res_ok = self.client.post(
+            "/api/v1/commerce/checkout/",
+            {
+                "idempotency_key": "chk-valid-1",
+                "items": [{"product_id": str(self.prod_a.id), "quantity": 1}],
+                "payment_channel": "ZARVON_NASIYA",
+                "plan_id": str(self.plan12.id),
+            },
+            format="json",
+        )
+        self.assertEqual(res_ok.status_code, 201)
+        contract_id = res_ok.json()["finance"]["contract_id"]
+        total_payable = res_ok.json()["finance"]["total_payable"]
+
+        # Subsequent price change does NOT mutate OrderItem snapshot
+        self.prod_a.cash_price = 15_000_000
+        self.prod_a.save()
+        item_snap = OrderItem.objects.filter(product=self.prod_a).first()
+        self.assertEqual(item_snap.unit_price_snapshot, 10_000_000)
+
+        # Unverified non-delivered purchase review is blocked
+        rev_resp = self.client.post(f"/api/v1/catalog/products/{self.prod_a.id}/reviews/", {"rating": 5, "comment": "Test"}, format="json")
+        self.assertEqual(rev_resp.status_code, 403)
+
+        # Full early repayment incurs 0 fee and restores customer limit
+        rep_resp = self.client.post(
+            f"/api/v1/finance/contracts/{contract_id}/repay/",
+            {"amount": total_payable, "is_early_repayment": True, "idempotency_key": "rep-early-1"},
+            format="json",
+        )
+        self.assertEqual(rep_resp.status_code, 200)
+        self.assertEqual(rep_resp.json()["early_fee"], 0)
+        self.assertEqual(rep_resp.json()["remaining_balance"], 0)
+        self.assertEqual(rep_resp.json()["contract_status"], "Prepaid")
+        self.customer.installment_limit.refresh_from_db()
+        self.assertEqual(self.customer.installment_limit.used_limit_uzs, 0)
+
+    def test_xlsx_import_sanitization_and_ssrf_block(self):
+        self.client.force_authenticate(user=self.seller_a)
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.append(["sku", "title", "category_slug", "brand", "cash_price", "stock"])
+        ws.append(["GOOD-1", "Yangi Telefon", "smartfonlar", "Apple", 5000000, 4])
+        ws.append(["BAD-1", "=HYPERLINK(\"evil\")", "smartfonlar", "Apple", -100, 1])
+        buf = io.BytesIO()
+        wb.save(buf)
+        upload = SimpleUploadedFile("test_import.xlsx", buf.getvalue(), content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        resp = self.client.post("/api/v1/imports/upload/", {"file": upload, "idempotency_key": f"imp-{uuid.uuid4().hex}"}, format="multipart")
+        self.assertEqual(resp.status_code, 201)
+        self.assertEqual(resp.json()["summary"]["new"], 1)
+        self.assertEqual(resp.json()["summary"]["error"], 1)
+
+        # SSRF private metadata IP must be blocked
+        ssrf = self.client.post("/api/v1/imports/integrations/", {"provider_name": "Evil", "endpoint_url": "http://169.254.169.254/latest/meta-data/"}, format="json")
+        self.assertEqual(ssrf.status_code, 400)
+
+    def test_multibank_partial_failure_webhook_and_maker_checker(self):
+        BankPartner.objects.create(name="Bank OK", code="BOK", adapter_status="ONLINE", base_annual_rate_pct=26.0)
+        BankPartner.objects.create(name="Bank Down", code="BDN", adapter_status="TIMEOUT", base_annual_rate_pct=25.0)
+        CustomerConsent.objects.create(user=self.customer, purpose="BANK_TRANSFER", is_granted=True)
+        CustomerConsent.objects.create(user=self.customer, purpose="CREDIT_BUREAU", is_granted=True)
+
+        self.client.force_authenticate(user=self.customer)
+        gw = self.client.post(
+            "/api/v1/commerce/checkout/",
+            {
+                "idempotency_key": "chk-gw-1",
+                "items": [{"product_id": str(self.prod_a.id), "quantity": 1}],
+                "payment_channel": "BANK_GATEWAY",
+                "months": 12,
+            },
+            format="json",
+        )
+        self.assertEqual(gw.status_code, 201)
+        bank_results = gw.json()["finance"]["bank_results"]
+        self.assertEqual(len(bank_results), 2)
+        self.assertTrue(any(r["status"] == "Offer Available" for r in bank_results))
+        self.assertTrue(any(r["status"] == "Bank response pending" for r in bank_results))
+
+        # Webhook invalid signature -> 401; duplicate event_id -> idempotent replay
+        bad_wh = self.client.post("/api/v1/finance/webhooks/bank/", {"event_id": "E1"}, format="json", HTTP_X_ZARVON_SIGNATURE="INVALID")
+        self.assertEqual(bad_wh.status_code, 401)
+        ok_wh1 = self.client.post("/api/v1/finance/webhooks/bank/", {"event_id": "E2"}, format="json", HTTP_X_ZARVON_SIGNATURE="valid-sig")
+        self.assertEqual(ok_wh1.status_code, 200)
+        ok_wh2 = self.client.post("/api/v1/finance/webhooks/bank/", {"event_id": "E2"}, format="json", HTTP_X_ZARVON_SIGNATURE="valid-sig")
+        self.assertTrue(ok_wh2.json()["idempotent_replay"])
+        self.assertEqual(WebhookEvent.objects.filter(event_id="E2").count(), 1)
+
+        # Maker-Checker: same user cannot approve own request
+        mc = MakerCheckerRequest.objects.create(action_type="BHM_UPDATE", target_model="BhmValue", payload={"amount_uzs": 460000}, reason="Update", requested_by=self.super_admin)
+        self.client.force_authenticate(user=self.super_admin)
+        self.assertEqual(
+            self.client.post(f"/api/v1/accounts/maker-checker/{mc.id}/decide/", {"decision": "APPROVED", "decision_note": "Self"}, format="json", HTTP_X_MFA_CODE="123456").status_code,
+            403,
+        )

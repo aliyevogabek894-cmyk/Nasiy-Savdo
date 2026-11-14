@@ -1,0 +1,67 @@
+/* Multi-language UI dictionary (Section 30.5 & 36: Uzbek Latin primary, Russian, English) */
+export const DICT = {
+  uz: {
+    sandbox_notice: "SANDBOX / DEMO REJIMI: Barcha nasiya va bank takliflari sinov ma’lumotlari; real kredit yoki pul operatsiyasi amalga oshirilmaydi.",
+    nav_home: "Bosh sahifa",
+    nav_catalog: "Katalog",
+    nav_cart: "Savat",
+    nav_cabinet: "Mijoz kabineti",
+    add_to_cart: "Savatga qo‘shish",
+    buy_nasiya: "Nasiyaga olish",
+    cash_price: "Naqd narx",
+    indicative: "indikativ hisob",
+    per_month: "oyiga",
+    total_payable: "Jami to‘lov",
+    no_installment: "Nasiya mumkin emas",
+    in_stock: "Omborda mavjud",
+    out_of_stock: "Tugagan",
+  },
+  ru: {
+    sandbox_notice: "РЕЖИМ SANDBOX / DEMO: Все предложения рассрочки и банков являются тестовыми; реальные кредиты и денежные операции не проводятся.",
+    nav_home: "Главная",
+    nav_catalog: "Каталог",
+    nav_cart: "Корзина",
+    nav_cabinet: "Кабинет клиента",
+    add_to_cart: "В корзину",
+    buy_nasiya: "Купить в рассрочку",
+    cash_price: "Наличная цена",
+    indicative: "индикативный расчёт",
+    per_month: "в месяц",
+    total_payable: "Итого к оплате",
+    no_installment: "Рассрочка запрещена",
+    in_stock: "В наличии",
+    out_of_stock: "Нет в наличии",
+  },
+  en: {
+    sandbox_notice: "SANDBOX / DEMO MODE: All installment and bank offers are test simulations; no real credit or financial transactions occur.",
+    nav_home: "Home",
+    nav_catalog: "Catalog",
+    nav_cart: "Cart",
+    nav_cabinet: "Customer Cabinet",
+    add_to_cart: "Add to Cart",
+    buy_nasiya: "Buy on Installments",
+    cash_price: "Cash price",
+    indicative: "indicative quote",
+    per_month: "per month",
+    total_payable: "Total payable",
+    no_installment: "Installments unavailable",
+    in_stock: "In stock",
+    out_of_stock: "Out of stock",
+  },
+};
+
+export const AppState = {
+  lang: localStorage.getItem("zarvon_lang") || "uz",
+  theme: localStorage.getItem("zarvon_theme") || "light",
+  user: null,
+  authenticated: false,
+  mfaVerified: false,
+  demoAccounts: [],
+  cartCount: 0,
+  compareIds: JSON.parse(localStorage.getItem("zarvon_compare") || "[]"),
+  wishlistIds: new Set(),
+};
+
+export function t(key) {
+  return (DICT[AppState.lang] && DICT[AppState.lang][key]) || DICT.uz[key] || key;
+}
