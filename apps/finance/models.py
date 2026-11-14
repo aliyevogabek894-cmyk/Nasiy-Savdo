@@ -350,3 +350,145 @@ class ReconciliationRecord(models.Model):
     class Meta:
         db_table = "reconciliation_records"
         ordering = ["-reconciliation_date"]
+
+
+class ExternalScoringReport(models.Model):
+    """KATM (credit history & external loans), MIB enforcement debt & 50% DSTI burden report."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="external_scoring_reports")
+    check_reference = models.CharField(max_length=48, unique=True, db_index=True)
+    provider_mode = models.CharField(max_length=24, default="SANDBOX_ADAPTER")
+    scenario_tag = models.CharField(max_length=32, default="auto")
+    pinfl_masked = models.CharField(max_length=24, blank=True)
+    inn_masked = models.CharField(max_length=24, blank=True)
+    monthly_income_uzs = models.PositiveBigIntegerField(default=0)
+
+    # MIB (Majburiy ijro byurosi)
+    mib_status = models.CharField(
+        max_length=16,
+        default="CLEAN",
+        choices=[("CLEAN", "Qarz yo‘q"), ("WARNING", "Kichik ijro/jarima"), ("BLOCKED", "Taqiqlangan ijro qarzi")],
+    )
+    mib_debt_uzs = models.PositiveBigIntegerField(default=0)
+    mib_active_cases_count = models.PositiveIntegerField(default=0)
+    mib_details = models.JSONField(default=list)
+
+    # KATM (Kredit byurosi — boshqa bank/nasiya kreditlari)
+    katm_score = models.PositiveIntegerField(default=710)
+    external_active_credits_count = models.PositiveIntegerField(default=0)
+    external_total_debt_uzs = models.PositiveBigIntegerField(default=0)
+    external_monthly_obligations_uzs = models.PositiveBigIntegerField(default=0)
+    external_overdue_days_max = models.PositiveIntegerField(default=0)
+    external_credit_history_grade = models.CharField(max_length=8, default="A")
+    external_obligations_breakdown = models.JSONField(default=list)
+
+    # Markaziy bank DSTI <= 50% (Qarz yuki)
+    zarvon_active_monthly_uzs = models.PositiveBigIntegerField(default=0)
+    projected_new_monthly_uzs = models.PositiveBigIntegerField(default=0)
+    dsti_before_pct = models.FloatField(default=0.0)
+    dsti_after_pct = models.FloatField(default=0.0)
+    max_safe_monthly_uzs = models.PositiveBigIntegerField(default=0)
+    recommended_limit_uzs = models.PositiveBigIntegerField(default=0)
+    decision = models.CharField(
+        max_length=24,
+        default="APPROVE",
+        choices=[("APPROVE", "Tasdiqlandi"), ("MANUAL_REVIEW", "Qo‘shimcha ko‘rik"), ("DECLINE", "Rad etildi")],
+    )
+    decision_reasons = models.JSONField(default=list)
+    is_demo = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "external_scoring_reports"
+        ordering = ["-created_at"]
+
+
+class PaymentCard(models.Model):
+    """Tokenized Uzcard/Humo/Visa card — stores encrypted PSP token + masked PAN only (no raw PAN/CVV)."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="payment_cards")
+    provider = models.CharField(
+        max_length=24,
+        choices=[("Payme", "Payme"), ("Click", "Click"), ("Uzum Bank", "Uzum Bank"), ("Uzcard/Humo", "Uzcard/Humo")],
+        default="Uzcard/Humo",
+    )
+    card_brand = models.CharField(max_length=20, default="Uzcard")
+    card_token_encrypted = models.TextField()
+    card_masked_pan = models.CharField(max_length=24)
+    expiry_masked = models.CharField(max_length=8, default="**/28")
+    card_holder = models.CharField(max_length=120, blank=True)
+    is_verified = models.BooleanField(default=True)
+    is_default = models.BooleanField(default=False)
+    auto_debit_enabled = models.BooleanField(default=True)
+    is_demo = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "payment_cards"
+        ordering = ["-is_default", "-created_at"]
+
+
+class PspTransaction(models.Model):
+    """Protocol-accurate transaction log for Click (Prepare/Complete) & Payme (JSON-RPC 2.0) & Uzum/Paynet."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    psp_provider = models.CharField(max_length=32, db_index=True)  # Click, Payme, Uzum Bank, Paynet
+    external_trans_id = models.CharField(max_length=96, db_index=True)
+    merchant_trans_id = models.CharField(max_length=64, db_index=True)  # order_number or contract_number
+    merchant_prepare_id = models.CharField(max_length=64, blank=True)
+    action_stage = models.CharField(
+        max_length=24,
+        default="INITIATED",
+        choices=[
+            ("INITIATED", "Boshlangan"),
+            ("PREPARED", "Prepare / Created"),
+            ("PERFORMED", "To‘landi (Complete/Perform)"),
+            ("CANCELLED", "Bekor qilindi"),
+            ("FAILED", "Xato"),
+        ],
+    )
+    amount_tiyin = models.BigIntegerField()  # 1 UZS = 100 tiyin
+    state_code = models.IntegerField(default=1)  # Payme states: 1 created, 2 performed, -1/-2 cancelled
+    signature_verified = models.BooleanField(default=False)
+    idempotency_key = models.CharField(max_length=96, unique=True)
+    order = models.ForeignKey("commerce.Order", on_delete=models.SET_NULL, null=True, blank=True, related_name="psp_transactions")
+    contract = models.ForeignKey(InstallmentContract, on_delete=models.SET_NULL, null=True, blank=True, related_name="psp_transactions")
+    raw_payload_sanitized = models.JSONField(default=dict)
+    is_demo = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "psp_transactions"
+        ordering = ["-created_at"]
+
+
+class PaymentReminderLog(models.Model):
+    """Audit trail of upcoming payment & overdue alerts sent to customers."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    contract = models.ForeignKey(InstallmentContract, on_delete=models.CASCADE, related_name="reminder_logs")
+    schedule_item = models.ForeignKey(InstallmentScheduleItem, on_delete=models.CASCADE, related_name="reminder_logs")
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="payment_reminders")
+    window_tag = models.CharField(
+        max_length=20,
+        choices=[
+            ("DUE_7_DAYS", "7 kun qoldi"),
+            ("DUE_3_DAYS", "3 kun qoldi"),
+            ("DUE_1_DAY", "1 kun qoldi"),
+            ("DUE_TODAY", "Bugun to‘lov kuni"),
+            ("OVERDUE", "Muddati o‘tgan"),
+        ],
+    )
+    channel = models.CharField(max_length=20, default="SMS")
+    amount_due_uzs = models.PositiveBigIntegerField()
+    due_date = models.DateField()
+    sent_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="sent_reminders")
+    status = models.CharField(max_length=24, default="SENT")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "payment_reminder_logs"
+        ordering = ["-created_at"]

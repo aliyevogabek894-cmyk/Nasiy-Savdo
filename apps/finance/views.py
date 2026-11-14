@@ -1,13 +1,17 @@
-"""Nasiya Calculator, Consents, KYC, Customer Cabinet, Early Repayment, Multi-Bank & Reconciliation."""
+"""Nasiya Calculator, Consents, KYC/KATM/MIB Scoring, Customer Cabinet, Click/Payme PSP & Due Monitor."""
+import base64
+from datetime import timedelta
+import json
 import uuid
+from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 from rest_framework import permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from config.permissions import HasRolePermission
-from config.utils import hash_identifier
+from config.permissions import ADMIN_ROLES, HasRolePermission
+from config.utils import encrypt_field, hash_identifier, mask_value
 from apps.accounts.models import User
 from apps.finance.models import (
     BankApplication,
@@ -19,17 +23,30 @@ from apps.finance.models import (
     CustomerConsent,
     CustomerLimit,
     EarlyRepayment,
+    ExternalScoringReport,
     IdentityCheck,
     InstallmentContract,
     InstallmentPlan,
+    InstallmentScheduleItem,
     LimitEvent,
+    PaymentCard,
     PaymentRecord,
+    PaymentReminderLog,
+    PspTransaction,
     ReconciliationRecord,
     RepaymentEvent,
     WebhookEvent,
 )
 from apps.finance.providers import ComplianceViolationError, OwnInstallmentProvider
-from apps.governance.models import AuditLog, BhmValue, ComplianceRuleVersion, NotificationEvent
+from apps.finance.psp import (
+    compute_click_signature,
+    process_click_webhook,
+    process_payme_rpc,
+    resolve_payment_target,
+    settle_psp_payment,
+)
+from apps.finance.scoring import run_katm_and_mib_scoring
+from apps.governance.models import AuditLog, BhmValue, ComplianceRuleVersion, NotificationEvent, SecurityEvent
 from apps.risk_collections.models import FraudCase, FraudSignal, RiskAssessment
 
 
@@ -131,7 +148,7 @@ class CustomerConsentsView(APIView):
 
 
 class KycAndScoringView(APIView):
-    """MyID/OneID Sandbox Verification, PINFL Multi-Account Anti-Fraud & Explainable Risk Limit."""
+    """MyID/OneID, PINFL/INN, KATM Credit Bureau, MIB Debt Check & 50% DSTI Scoring Engine."""
 
     permission_classes = [permissions.IsAuthenticated]
 
@@ -142,16 +159,23 @@ class KycAndScoringView(APIView):
         has_cb_consent = CustomerConsent.objects.filter(user=user, purpose="CREDIT_BUREAU", is_granted=True, revoked_at__isnull=True).exists()
         if not (has_id_consent and has_cb_consent):
             return Response(
-                {"detail": "Shaxsni tasdiqlash va kredit hisobotini so‘rash uchun alohida roziliklar talab qilinadi (28.4 / 23.1)."},
+                {"detail": "Shaxsni tasdiqlash, KATM va MIB tekshiruvi uchun alohida roziliklar talab qilinadi (28.4 / 23.1)."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
         pinfl = (request.data.get("pinfl") or "").strip()
+        inn = (request.data.get("inn") or "").strip()
         passport = (request.data.get("passport") or "").strip().upper()
         birth_year = int(request.data.get("birth_year") or 1995)
+        monthly_income_uzs = int(request.data.get("monthly_income_uzs") or 8_000_000)
+        requested_purchase_uzs = max(0, int(request.data.get("requested_purchase_uzs") or 0))
+        requested_months = min(12, max(1, int(request.data.get("requested_months") or 12)))
+        scenario = (request.data.get("scenario") or "auto").strip()
         liveness_ok = bool(request.data.get("liveness_passed", True))
         if len(pinfl) != 14 or not pinfl.isdigit() or len(passport) < 8:
             return Response({"detail": "14 xonali PINFL va pasport/ID seriya raqamini to‘g‘ri kiriting."}, status=status.HTTP_400_BAD_REQUEST)
+        if inn and (len(inn) != 9 or not inn.isdigit()):
+            return Response({"detail": "INN / STIR raqami 9 xonali raqam bo‘lishi kerak."}, status=status.HTTP_400_BAD_REQUEST)
 
         # Duplicate PINFL check (Section 31.1 — Ko‘p akkaunt himoyasi)
         p_hash = hash_identifier(pinfl)
@@ -170,72 +194,111 @@ class KycAndScoringView(APIView):
                 status=status.HTTP_409_CONFLICT,
             )
 
-        user.set_identity_fields(pinfl=pinfl, passport=passport)
+        user.set_identity_fields(pinfl=pinfl, passport=passport, inn=inn)
         user.birth_year = birth_year
         user.kyc_status = "VERIFIED" if liveness_ok else "PENDING"
         user.save()
 
         IdentityCheck.objects.create(
             user=user,
-            provider="MyID Sandbox",
+            provider="MyID + INN Sandbox",
             liveness_passed=liveness_ok,
             status="VERIFIED" if liveness_ok else "FAILED",
             correlation_id=f"MYID-{uuid.uuid4().hex[:8].upper()}",
         )
 
-        # Business age policy check (22-65 yosh biznes siyosati, qonun emas — 28.2)
-        age = timezone.now().year - birth_year
-        if age < 22 or age > 65:
-            ra = RiskAssessment.objects.create(
-                user=user,
-                score=510,
-                dti_ratio_pct=45.0,
-                decision="MANUAL_REVIEW",
-                reason_codes=["AGE_POLICY_BOUNDARY", "NEEDS_HUMAN_REVIEW"],
-                recommended_tier="Start",
-            )
-            return Response(
-                {
-                    "ok": True,
-                    "kyc_status": user.kyc_status,
-                    "decision": "MANUAL_REVIEW",
-                    "message": f"Sizning arizangiz qo‘shimcha inson ko‘rigiga yuborildi (biznes yosh siyosati: 22–65 yosh). Apellyatsiya huquqingiz mavjud.",
-                    "assessment_id": str(ra.id),
-                }
-            )
+        # Run full KATM + MIB + 50% DSTI scoring engine
+        ext = run_katm_and_mib_scoring(
+            user=user,
+            pinfl=pinfl,
+            inn=inn,
+            birth_year=birth_year,
+            monthly_income_uzs=monthly_income_uzs,
+            requested_purchase_uzs=requested_purchase_uzs,
+            requested_months=requested_months,
+            scenario=scenario,
+        )
 
-        # Assign transparent Sandbox tier limit
+        rec_tier = "Max" if ext.recommended_limit_uzs >= 20_000_000 else ("Plus" if ext.recommended_limit_uzs >= 8_000_000 else "Start")
         ra = RiskAssessment.objects.create(
             user=user,
-            score=735,
-            dti_ratio_pct=21.5,
-            decision="APPROVE",
-            reason_codes=["MYID_VERIFIED", "STABLE_INCOME_SANDBOX", "LOW_DEBT_LOAD"],
-            recommended_tier="Plus",
+            model_version="katm-mib-dsti-v3.1-uz",
+            score=ext.katm_score,
+            dti_ratio_pct=ext.dsti_before_pct,
+            decision=ext.decision,
+            reason_codes=ext.decision_reasons,
+            recommended_tier=rec_tier,
         )
+
         lim, _ = CustomerLimit.objects.get_or_create(user=user)
-        lim.tier = "Plus"
-        lim.total_limit_uzs = 15_000_000
-        lim.is_frozen = False
-        lim.is_demo_limit = True
-        lim.save()
-        LimitEvent.objects.create(
-            customer_limit=lim,
-            event_type="INCREASE",
-            amount_delta=15_000_000,
-            reason="MyID Sandbox tasdiqlandi va skoring o‘tdi (DEMO limit)",
+        if ext.decision == "APPROVE":
+            lim.tier = rec_tier
+            lim.total_limit_uzs = max(lim.used_limit_uzs, ext.recommended_limit_uzs)
+            lim.is_frozen = False
+            lim.freeze_reason = ""
+            lim.is_demo_limit = ext.is_demo
+            lim.save()
+            LimitEvent.objects.create(
+                customer_limit=lim,
+                event_type="INCREASE",
+                amount_delta=ext.recommended_limit_uzs,
+                reason=f"KATM ({ext.katm_score}) + MIB ({ext.mib_status}) + DSTI ({ext.dsti_before_pct}%) asosida limit hisoblandi",
+                actor=user,
+            )
+        elif ext.decision == "DECLINE":
+            lim.is_frozen = True
+            lim.freeze_reason = ext.decision_reasons[0] if ext.decision_reasons else "KATM/MIB/DSTI cheklovi"
+            lim.save(update_fields=["is_frozen", "freeze_reason", "updated_at"])
+
+        AuditLog.record(
             actor=user,
+            action="KATM_MIB_SCORING_COMPLETED",
+            object_type="ExternalScoringReport",
+            object_id=ext.id,
+            reason=f"Qaror: {ext.decision}, DSTI: {ext.dsti_before_pct}%, MIB: {ext.mib_status}",
         )
-        AuditLog.record(actor=user, action="KYC_AND_SCORING_COMPLETED", object_type="CustomerLimit", object_id=lim.id, reason="MyID sandbox verifikatsiyasi")
         return Response(
             {
                 "ok": True,
                 "kyc_status": user.kyc_status,
-                "decision": "APPROVE",
+                "decision": ext.decision,
                 "tier": lim.tier,
                 "available_limit_uzs": lim.available_limit_uzs,
-                "reason_codes": ra.reason_codes,
-                "is_demo_limit": True,
+                "reason_codes": ext.decision_reasons,
+                "assessment_id": str(ra.id),
+                "is_demo_limit": ext.is_demo,
+                "message": (
+                    ext.decision_reasons[0]
+                    if ext.decision != "APPROVE" and ext.decision_reasons
+                    else f"KATM/MIB tekshiruvi muvaffaqiyatli! Ajratilgan limit: {lim.available_limit_uzs:,} so‘m ({lim.tier})."
+                ),
+                "scoring_report": {
+                    "check_reference": ext.check_reference,
+                    "provider_mode": ext.provider_mode,
+                    "pinfl_masked": ext.pinfl_masked,
+                    "inn_masked": ext.inn_masked,
+                    "monthly_income_uzs": ext.monthly_income_uzs,
+                    "mib_status": ext.mib_status,
+                    "mib_debt_uzs": ext.mib_debt_uzs,
+                    "mib_active_cases_count": ext.mib_active_cases_count,
+                    "mib_details": ext.mib_details,
+                    "katm_score": ext.katm_score,
+                    "external_credit_history_grade": ext.external_credit_history_grade,
+                    "external_active_credits_count": ext.external_active_credits_count,
+                    "external_total_debt_uzs": ext.external_total_debt_uzs,
+                    "external_monthly_obligations_uzs": ext.external_monthly_obligations_uzs,
+                    "external_overdue_days_max": ext.external_overdue_days_max,
+                    "external_obligations_breakdown": ext.external_obligations_breakdown,
+                    "zarvon_active_monthly_uzs": ext.zarvon_active_monthly_uzs,
+                    "projected_new_monthly_uzs": ext.projected_new_monthly_uzs,
+                    "dsti_before_pct": ext.dsti_before_pct,
+                    "dsti_after_pct": ext.dsti_after_pct,
+                    "max_safe_monthly_uzs": ext.max_safe_monthly_uzs,
+                    "recommended_limit_uzs": ext.recommended_limit_uzs,
+                    "decision": ext.decision,
+                    "decision_reasons": ext.decision_reasons,
+                    "is_demo": ext.is_demo,
+                },
             }
         )
 
@@ -252,8 +315,10 @@ class CustomerFinanceCabinetView(APIView):
         payments = PaymentRecord.objects.filter(user=user)[:20]
         assessments = RiskAssessment.objects.filter(user=user)[:5]
 
-        # Find earliest upcoming installment across active contracts for "Next Payment Card"
+        # Find earliest upcoming installment & 7-day alerts across active contracts
+        today = timezone.now().date()
         next_payment = None
+        due_alerts = []
         contracts_data = []
         for c in contracts:
             sched = [
@@ -261,6 +326,7 @@ class CustomerFinanceCabinetView(APIView):
                     "id": str(s.id),
                     "installment_no": s.installment_no,
                     "due_date": s.due_date,
+                    "days_until_due": (s.due_date - today).days,
                     "principal_part": s.principal_part,
                     "markup_part": s.markup_part,
                     "amount_due": s.amount_due,
@@ -271,14 +337,32 @@ class CustomerFinanceCabinetView(APIView):
                 for s in c.schedule_items.all()
             ]
             upcoming = next((s for s in sched if s["status"] in {"UPCOMING", "PARTIAL", "OVERDUE"}), None)
-            if upcoming and (next_payment is None or str(upcoming["due_date"]) < str(next_payment["due_date"])):
-                next_payment = {
-                    "contract_id": str(c.id),
-                    "contract_number": c.contract_number,
-                    "due_date": upcoming["due_date"],
-                    "amount": upcoming["amount_due"] - upcoming["amount_paid"] + upcoming["penalty_amount"],
-                    "status": upcoming["status"],
-                }
+            if upcoming:
+                d_left = upcoming["days_until_due"]
+                due_amt = max(0, upcoming["amount_due"] - upcoming["amount_paid"] + upcoming["penalty_amount"])
+                if d_left <= 7:
+                    due_alerts.append(
+                        {
+                            "contract_id": str(c.id),
+                            "contract_number": c.contract_number,
+                            "installment_no": upcoming["installment_no"],
+                            "due_date": upcoming["due_date"],
+                            "days_until_due": d_left,
+                            "amount": due_amt,
+                            "urgency": "OVERDUE" if d_left < 0 else ("DUE_TODAY" if d_left == 0 else ("DUE_SOON_3D" if d_left <= 3 else "DUE_SOON_7D")),
+                        }
+                    )
+                if next_payment is None or str(upcoming["due_date"]) < str(next_payment["due_date"]):
+                    next_payment = {
+                        "contract_id": str(c.id),
+                        "contract_number": c.contract_number,
+                        "installment_no": upcoming["installment_no"],
+                        "due_date": upcoming["due_date"],
+                        "days_until_due": d_left,
+                        "urgency": "OVERDUE" if d_left < 0 else ("DUE_TODAY" if d_left == 0 else ("DUE_SOON_3D" if d_left <= 3 else "UPCOMING")),
+                        "amount": due_amt,
+                        "status": upcoming["status"],
+                    }
             contracts_data.append(
                 {
                     "id": str(c.id),
@@ -346,6 +430,51 @@ class CustomerFinanceCabinetView(APIView):
                 }
             )
 
+        ext_rep = ExternalScoringReport.objects.filter(user=user).first()
+        latest_ext = (
+            {
+                "check_reference": ext_rep.check_reference,
+                "provider_mode": ext_rep.provider_mode,
+                "pinfl_masked": ext_rep.pinfl_masked,
+                "inn_masked": ext_rep.inn_masked,
+                "monthly_income_uzs": ext_rep.monthly_income_uzs,
+                "mib_status": ext_rep.mib_status,
+                "mib_debt_uzs": ext_rep.mib_debt_uzs,
+                "mib_active_cases_count": ext_rep.mib_active_cases_count,
+                "mib_details": ext_rep.mib_details,
+                "katm_score": ext_rep.katm_score,
+                "external_credit_history_grade": ext_rep.external_credit_history_grade,
+                "external_active_credits_count": ext_rep.external_active_credits_count,
+                "external_total_debt_uzs": ext_rep.external_total_debt_uzs,
+                "external_monthly_obligations_uzs": ext_rep.external_monthly_obligations_uzs,
+                "external_overdue_days_max": ext_rep.external_overdue_days_max,
+                "external_obligations_breakdown": ext_rep.external_obligations_breakdown,
+                "zarvon_active_monthly_uzs": ext_rep.zarvon_active_monthly_uzs,
+                "dsti_before_pct": ext_rep.dsti_before_pct,
+                "dsti_after_pct": ext_rep.dsti_after_pct,
+                "max_safe_monthly_uzs": ext_rep.max_safe_monthly_uzs,
+                "recommended_limit_uzs": ext_rep.recommended_limit_uzs,
+                "decision": ext_rep.decision,
+                "decision_reasons": ext_rep.decision_reasons,
+                "is_demo": ext_rep.is_demo,
+                "created_at": ext_rep.created_at,
+            }
+            if ext_rep
+            else None
+        )
+        cards_data = [
+            {
+                "id": str(cd.id),
+                "provider": cd.provider,
+                "card_brand": cd.card_brand,
+                "card_masked_pan": cd.card_masked_pan,
+                "expiry_masked": cd.expiry_masked,
+                "is_default": cd.is_default,
+                "auto_debit_enabled": cd.auto_debit_enabled,
+            }
+            for cd in PaymentCard.objects.filter(user=user)
+        ]
+
         return Response(
             {
                 "limit": {
@@ -362,6 +491,9 @@ class CustomerFinanceCabinetView(APIView):
                     ],
                 },
                 "next_payment": next_payment,
+                "due_alerts": due_alerts,
+                "latest_scoring_report": latest_ext,
+                "payment_cards": cards_data,
                 "contracts": contracts_data,
                 "credit_applications": apps_data,
                 "payments": [
@@ -660,5 +792,566 @@ class ReconciliationAdminView(APIView):
                     }
                     for so in payouts
                 ],
+            }
+        )
+
+
+def _detect_card_brand(pan: str) -> str:
+    if pan.startswith(("8600", "5614", "6262")):
+        return "Uzcard"
+    if pan.startswith("9860"):
+        return "Humo"
+    if pan.startswith("4"):
+        return "Visa"
+    if pan.startswith(("51", "52", "53", "54", "55", "22")):
+        return "Mastercard"
+    return "Uzcard"
+
+
+class PaymentCardsView(APIView):
+    """Tokenized Uzcard / Humo / Visa card vault (stores encrypted PSP token + masked PAN only)."""
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def _serialize_card(self, card: PaymentCard) -> dict:
+        return {
+            "id": str(card.id),
+            "provider": card.provider,
+            "card_brand": card.card_brand,
+            "card_masked_pan": card.card_masked_pan,
+            "expiry_masked": card.expiry_masked,
+            "card_holder": card.card_holder,
+            "is_verified": card.is_verified,
+            "is_default": card.is_default,
+            "auto_debit_enabled": card.auto_debit_enabled,
+            "is_demo": card.is_demo,
+            "created_at": card.created_at,
+        }
+
+    def get(self, request):
+        cards = PaymentCard.objects.filter(user=request.user)
+        return Response({"cards": [self._serialize_card(c) for c in cards]})
+
+    def post(self, request):
+        raw_pan = "".join(ch for ch in str(request.data.get("card_number") or "") if ch.isdigit())
+        expiry = str(request.data.get("expiry") or "").strip()
+        provider = str(request.data.get("provider") or "Uzcard/Humo").strip()
+        holder = str(request.data.get("card_holder") or request.user.full_name or "").strip()[:120]
+        set_default = bool(request.data.get("is_default", True))
+        auto_debit = bool(request.data.get("auto_debit_enabled", True))
+
+        if len(raw_pan) != 16:
+            return Response({"detail": "Karta raqami 16 ta raqamdan iborat bo‘lishi kerak."}, status=status.HTTP_400_BAD_REQUEST)
+        if len(expiry) < 4 or "/" not in expiry:
+            return Response({"detail": "Amal qilish muddatini MM/YY shaklida kiriting."}, status=status.HTTP_400_BAD_REQUEST)
+
+        brand = _detect_card_brand(raw_pan)
+        masked_pan = f"{raw_pan[:4]} **** **** {raw_pan[-4:]}"
+        yy = expiry.split("/")[-1].strip()[:2]
+        expiry_masked = f"**/{yy}"
+        token_secret = f"tok_{uuid.uuid4().hex}_{hash_identifier(raw_pan)[:12]}"
+
+        if set_default:
+            PaymentCard.objects.filter(user=request.user).update(is_default=False)
+
+        card = PaymentCard.objects.create(
+            user=request.user,
+            provider=provider if provider in {"Payme", "Click", "Uzum Bank", "Uzcard/Humo"} else "Uzcard/Humo",
+            card_brand=brand,
+            card_token_encrypted=encrypt_field(token_secret),
+            card_masked_pan=masked_pan,
+            expiry_masked=expiry_masked,
+            card_holder=holder,
+            is_verified=True,
+            is_default=set_default,
+            auto_debit_enabled=auto_debit,
+            is_demo=settings.ZARVON_SANDBOX_MODE,
+        )
+        AuditLog.record(
+            actor=request.user,
+            action="PAYMENT_CARD_LINKED",
+            object_type="PaymentCard",
+            object_id=str(card.id),
+            reason=f"{brand} ({masked_pan}) xavfsiz token bilan ulandi ({card.provider})",
+            after={"brand": brand, "masked_pan": masked_pan, "provider": card.provider},
+        )
+        return Response({"card": self._serialize_card(card), "detail": f"{brand} ({masked_pan}) xavfsiz token bilan ulandi."}, status=status.HTTP_201_CREATED)
+
+    def patch(self, request):
+        card_id = request.data.get("card_id")
+        card = PaymentCard.objects.filter(user=request.user, id=card_id).first()
+        if not card:
+            return Response({"detail": "Karta topilmadi."}, status=status.HTTP_404_NOT_FOUND)
+        if request.data.get("is_default"):
+            PaymentCard.objects.filter(user=request.user).update(is_default=False)
+            card.is_default = True
+        if "auto_debit_enabled" in request.data:
+            card.auto_debit_enabled = bool(request.data.get("auto_debit_enabled"))
+        card.save()
+        return Response({"card": self._serialize_card(card)})
+
+    def delete(self, request):
+        card_id = request.query_params.get("card_id") or request.data.get("card_id")
+        card = PaymentCard.objects.filter(user=request.user, id=card_id).first()
+        if not card:
+            return Response({"detail": "Karta topilmadi."}, status=status.HTTP_404_NOT_FOUND)
+        card.delete()
+        return Response({"detail": "Bog‘langan karta o‘chirildi."})
+
+
+class ClickMerchantWebhookView(APIView):
+    """Official Click Shop API Prepare (action=0) & Complete (action=1) webhook endpoint."""
+
+    authentication_classes = []
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        result = process_click_webhook(request.data)
+        return Response(result, status=status.HTTP_200_OK)
+
+
+class PaymeMerchantRpcView(APIView):
+    """Official Payme Business Merchant API JSON-RPC 2.0 endpoint."""
+
+    authentication_classes = []
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        auth_header = request.META.get("HTTP_AUTHORIZATION", "")
+        result = process_payme_rpc(request.data, auth_header)
+        return Response(result, status=status.HTTP_200_OK)
+
+
+class PspCheckoutAndSimulatorView(APIView):
+    """Unified PSP checkout & Sandbox gateway tester (Click, Payme, Uzum Bank, Paynet, Tokenized Card)."""
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        is_ops = request.user.role in (ADMIN_ROLES | {"FINANCE_OPERATIONS", "FINANCE_OFFICER", "RISK_ANALYST", "AUDITOR", "SUPPORT_AGENT"})
+        qs = PspTransaction.objects.select_related("order", "contract")
+        if not is_ops:
+            from django.db.models import Q
+            qs = qs.filter(Q(order__customer=request.user) | Q(contract__customer=request.user))
+        txs = qs[:40]
+        return Response(
+            {
+                "sandbox_mode": settings.ZARVON_SANDBOX_MODE,
+                "transactions": [
+                    {
+                        "id": str(t.id),
+                        "psp_provider": t.psp_provider,
+                        "external_trans_id": t.external_trans_id,
+                        "merchant_trans_id": t.merchant_trans_id,
+                        "merchant_prepare_id": t.merchant_prepare_id,
+                        "action_stage": t.action_stage,
+                        "amount_tiyin": t.amount_tiyin,
+                        "amount_uzs": t.amount_tiyin // 100,
+                        "state_code": t.state_code,
+                        "signature_verified": t.signature_verified,
+                        "is_demo": t.is_demo,
+                        "created_at": t.created_at,
+                    }
+                    for t in txs
+                ],
+                "summary": {
+                    "total_count": qs.count(),
+                    "performed_count": qs.filter(action_stage="PERFORMED").count(),
+                    "click_count": qs.filter(psp_provider="Click").count(),
+                    "payme_count": qs.filter(psp_provider="Payme").count(),
+                    "uzum_count": qs.filter(psp_provider="Uzum Bank").count(),
+                    "paynet_count": qs.filter(psp_provider="Paynet").count(),
+                },
+            }
+        )
+
+    def post(self, request):
+        reference = str(request.data.get("reference") or "").strip()
+        psp_provider = str(request.data.get("psp_provider") or "Payme").strip()
+        card_id = request.data.get("card_id")
+
+        if psp_provider not in {"Payme", "Click", "Uzum Bank", "Paynet", "Uzcard/Humo"}:
+            return Response({"detail": "Noto‘g‘ri to‘lov provayderi tanlandi."}, status=status.HTTP_400_BAD_REQUEST)
+
+        target_kind, target_obj, expected_uzs = resolve_payment_target(reference)
+        if not target_obj:
+            return Response({"detail": "Buyurtma (ZRV-...) yoki nasiya shartnomasi (NSY-...) topilmadi."}, status=status.HTTP_404_NOT_FOUND)
+
+        is_ops = request.user.role in (ADMIN_ROLES | {"FINANCE_OPERATIONS", "FINANCE_OFFICER"})
+        if target_obj.customer_id != request.user.id and not is_ops:
+            return Response({"detail": "Ushbu to‘lov obyektiga ruxsat yo‘q."}, status=status.HTTP_403_FORBIDDEN)
+
+        req_amount = int(request.data.get("amount_uzs") or expected_uzs or 0)
+        if target_kind == "ORDER":
+            req_amount = expected_uzs
+        elif target_kind == "CONTRACT":
+            if req_amount <= 0 or req_amount > target_obj.remaining_balance:
+                req_amount = expected_uzs or target_obj.remaining_balance
+        if req_amount <= 0:
+            return Response({"detail": "To‘lov summasi allaqachon yopilgan yoki 0."}, status=status.HTTP_400_BAD_REQUEST)
+
+        used_card = None
+        if card_id:
+            used_card = PaymentCard.objects.filter(id=card_id, user=target_obj.customer).first()
+            if not used_card:
+                return Response({"detail": "Tanlangan karta topilmadi."}, status=status.HTTP_404_NOT_FOUND)
+
+        if not settings.ZARVON_SANDBOX_MODE:
+            # In strict production mode without sandbox, return signed checkout parameters instead of auto-settling.
+            payme_params = f"m={settings.PAYME_MERCHANT_ID};ac.order_id={reference};a={req_amount * 100}"
+            payme_b64 = base64.b64encode(payme_params.encode("utf-8")).decode("utf-8")
+            return Response(
+                {
+                    "mode": "LIVE_CHECKOUT_INTENT",
+                    "psp_provider": psp_provider,
+                    "reference": reference,
+                    "amount_uzs": req_amount,
+                    "checkout_url": f"https://checkout.paycom.uz/{payme_b64}" if psp_provider == "Payme" else f"https://my.click.uz/services/pay?service_id={settings.CLICK_SERVICE_ID}&merchant_id={settings.CLICK_MERCHANT_ID}&amount={req_amount}&transaction_param={reference}",
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        # Sandbox Protocol Execution — exercises the real cryptographic verification paths!
+        protocol_trace = []
+        if psp_provider == "Click":
+            click_tx_id = str(int(timezone.now().timestamp() * 1000))[-10:]
+            sign_time = timezone.now().strftime("%Y-%m-%d %H:%M:%S")
+            prep_sign = compute_click_signature(
+                click_trans_id=click_tx_id,
+                service_id=settings.CLICK_SERVICE_ID,
+                secret_key=settings.CLICK_SECRET_KEY,
+                merchant_trans_id=reference,
+                amount=str(req_amount),
+                action="0",
+                sign_time=sign_time,
+            )
+            prep_resp = process_click_webhook(
+                {
+                    "click_trans_id": click_tx_id,
+                    "service_id": settings.CLICK_SERVICE_ID,
+                    "click_paydoc_id": f"DOC-{click_tx_id}",
+                    "merchant_trans_id": reference,
+                    "amount": str(req_amount),
+                    "action": "0",
+                    "sign_time": sign_time,
+                    "sign_string": prep_sign,
+                }
+            )
+            protocol_trace.append({"step": "CLICK_PREPARE (action=0)", "response": prep_resp})
+            if prep_resp.get("error") != 0:
+                return Response({"detail": prep_resp.get("error_note"), "trace": protocol_trace}, status=status.HTTP_400_BAD_REQUEST)
+
+            comp_sign = compute_click_signature(
+                click_trans_id=click_tx_id,
+                service_id=settings.CLICK_SERVICE_ID,
+                secret_key=settings.CLICK_SECRET_KEY,
+                merchant_trans_id=reference,
+                merchant_prepare_id=prep_resp["merchant_prepare_id"],
+                amount=str(req_amount),
+                action="1",
+                sign_time=sign_time,
+            )
+            comp_resp = process_click_webhook(
+                {
+                    "click_trans_id": click_tx_id,
+                    "service_id": settings.CLICK_SERVICE_ID,
+                    "click_paydoc_id": f"DOC-{click_tx_id}",
+                    "merchant_trans_id": reference,
+                    "merchant_prepare_id": prep_resp["merchant_prepare_id"],
+                    "amount": str(req_amount),
+                    "action": "1",
+                    "sign_time": sign_time,
+                    "sign_string": comp_sign,
+                }
+            )
+            protocol_trace.append({"step": "CLICK_COMPLETE (action=1)", "response": comp_resp})
+        elif psp_provider == "Payme":
+            payme_id = f"pm_{uuid.uuid4().hex[:16]}"
+            auth_hdr = "Basic " + base64.b64encode(f"Paycom:{settings.PAYME_CASHBOX_KEY}".encode("utf-8")).decode("utf-8")
+            amount_tiyin = req_amount * 100
+            r1 = process_payme_rpc(
+                {"jsonrpc": "2.0", "id": 1, "method": "CheckPerformTransaction", "params": {"amount": amount_tiyin, "account": {"order_id": reference}}},
+                auth_hdr,
+            )
+            r2 = process_payme_rpc(
+                {"jsonrpc": "2.0", "id": 2, "method": "CreateTransaction", "params": {"id": payme_id, "time": int(timezone.now().timestamp() * 1000), "amount": amount_tiyin, "account": {"order_id": reference}}},
+                auth_hdr,
+            )
+            r3 = process_payme_rpc(
+                {"jsonrpc": "2.0", "id": 3, "method": "PerformTransaction", "params": {"id": payme_id}},
+                auth_hdr,
+            )
+            protocol_trace = [
+                {"step": "PAYME CheckPerformTransaction", "response": r1},
+                {"step": "PAYME CreateTransaction (state=1)", "response": r2},
+                {"step": "PAYME PerformTransaction (state=2)", "response": r3},
+            ]
+        else:
+            ext_id = f"{psp_provider[:3].upper()}-{uuid.uuid4().hex[:10].upper()}"
+            PspTransaction.objects.create(
+                psp_provider=psp_provider,
+                external_trans_id=ext_id,
+                merchant_trans_id=reference,
+                action_stage="PERFORMED",
+                amount_tiyin=req_amount * 100,
+                state_code=2,
+                signature_verified=True,
+                idempotency_key=f"psp-{ext_id}",
+                order=target_obj if target_kind == "ORDER" else None,
+                contract=target_obj if target_kind == "CONTRACT" else None,
+                raw_payload_sanitized={"card_masked": used_card.card_masked_pan if used_card else None, "sandbox": True},
+                is_demo=True,
+            )
+            res = settle_psp_payment(
+                psp_provider=psp_provider,
+                target_kind=target_kind,
+                target_obj=target_obj,
+                amount_uzs=req_amount,
+                idem_key=f"psp-settle-{ext_id}",
+                external_trans_id=ext_id,
+            )
+            protocol_trace = [{"step": f"{psp_provider} Instant Tokenized Settlement", "response": res}]
+
+        AuditLog.record(
+            actor=request.user,
+            action="PSP_SANDBOX_PAYMENT_SETTLED",
+            object_type=target_kind,
+            object_id=reference,
+            reason=f"{psp_provider} orqali {req_amount:,} so‘m to‘lov",
+            after={"psp_provider": psp_provider, "amount_uzs": req_amount, "card_masked": used_card.card_masked_pan if used_card else None},
+        )
+        return Response(
+            {
+                "status": "SUCCEEDED",
+                "mode": "SANDBOX_PROTOCOL_EXECUTED",
+                "psp_provider": psp_provider,
+                "reference": reference,
+                "amount_uzs": req_amount,
+                "card_masked": used_card.card_masked_pan if used_card else None,
+                "trace": protocol_trace,
+                "detail": f"{psp_provider} orqali {req_amount:,} so‘m to‘lov muvaffaqiyatli amalga oshirildi (Sandbox).",
+            }
+        )
+
+
+class UpcomingPaymentsMonitorView(APIView):
+    """Operations queue for upcoming (today, 1-3d, 4-7d, 8-30d) & overdue installments + reminders."""
+
+    permission_classes = [HasRolePermission]
+    allowed_roles = ADMIN_ROLES | {"FINANCE_OPERATIONS", "FINANCE_OFFICER", "COLLECTIONS_AGENT", "RISK_ANALYST", "SUPPORT_AGENT", "AUDITOR"}
+
+    def _classify_window(self, days_left: int) -> tuple[str, str]:
+        if days_left < 0:
+            return "OVERDUE", "OVERDUE"
+        if days_left == 0:
+            return "DUE_TODAY", "DUE_TODAY"
+        if days_left <= 3:
+            return "DUE_3_DAYS", f"DUE_{days_left}_DAY" if days_left == 1 else "DUE_3_DAYS"
+        if days_left <= 7:
+            return "DUE_7_DAYS", "DUE_7_DAYS"
+        return "UPCOMING_30_DAYS", "DUE_7_DAYS"
+
+    def get(self, request):
+        today = timezone.localdate()
+        cutoff = today + timedelta(days=30)
+        items = (
+            InstallmentScheduleItem.objects.select_related("contract", "contract__customer")
+            .filter(
+                status__in=["OVERDUE", "PARTIAL", "UPCOMING"],
+                contract__status__in=[ContractStatus.SIGNED, ContractStatus.ACTIVE, ContractStatus.OVERDUE, ContractStatus.RESTRUCTURED],
+                due_date__lte=cutoff,
+            )
+            .order_by("due_date", "installment_no")[:150]
+        )
+
+        recent_rem_qs = PaymentReminderLog.objects.filter(created_at__date=today).values_list("schedule_item_id", flat=True)
+        reminded_today_ids = set(recent_rem_qs)
+
+        buckets = {"OVERDUE": [], "DUE_TODAY": [], "DUE_3_DAYS": [], "DUE_7_DAYS": [], "UPCOMING_30_DAYS": []}
+        totals = {"OVERDUE": 0, "DUE_TODAY": 0, "DUE_3_DAYS": 0, "DUE_7_DAYS": 0, "UPCOMING_30_DAYS": 0}
+        queue = []
+
+        for item in items:
+            due_uzs = max(0, (item.amount_due + item.penalty_amount) - item.amount_paid)
+            if due_uzs <= 0:
+                continue
+            days_left = (item.due_date - today).days
+            bucket, tag = self._classify_window(days_left)
+            totals[bucket] += due_uzs
+            cust = item.contract.customer
+            entry = {
+                "schedule_item_id": str(item.id),
+                "contract_id": str(item.contract_id),
+                "contract_number": item.contract.contract_number,
+                "customer_name": cust.full_name,
+                "customer_phone_masked": mask_value(cust.phone, visible_start=4, visible_end=2),
+                "installment_no": item.installment_no,
+                "due_date": item.due_date,
+                "days_until_due": days_left,
+                "bucket": bucket,
+                "window_tag": tag,
+                "amount_due_uzs": due_uzs,
+                "status": item.status,
+                "reminded_today": item.id in reminded_today_ids,
+            }
+            buckets[bucket].append(entry)
+            queue.append(entry)
+
+        logs = PaymentReminderLog.objects.select_related("contract", "user", "sent_by").all()[:30]
+        return Response(
+            {
+                "today": today,
+                "summary": {
+                    "overdue_count": len(buckets["OVERDUE"]),
+                    "overdue_uzs": totals["OVERDUE"],
+                    "due_today_count": len(buckets["DUE_TODAY"]),
+                    "due_today_uzs": totals["DUE_TODAY"],
+                    "due_3_days_count": len(buckets["DUE_3_DAYS"]),
+                    "due_3_days_uzs": totals["DUE_3_DAYS"],
+                    "due_7_days_count": len(buckets["DUE_7_DAYS"]),
+                    "due_7_days_uzs": totals["DUE_7_DAYS"],
+                    "upcoming_30_count": len(buckets["UPCOMING_30_DAYS"]),
+                    "upcoming_30_uzs": totals["UPCOMING_30_DAYS"],
+                },
+                "queue": queue,
+                "recent_reminders": [
+                    {
+                        "id": str(log.id),
+                        "contract_number": log.contract.contract_number,
+                        "customer_name": log.user.full_name,
+                        "window_tag": log.window_tag,
+                        "channel": log.channel,
+                        "amount_due_uzs": log.amount_due_uzs,
+                        "due_date": log.due_date,
+                        "status": log.status,
+                        "created_at": log.created_at,
+                    }
+                    for log in logs
+                ],
+            }
+        )
+
+    def post(self, request):
+        action = str(request.data.get("action") or "send_one")
+        channel = str(request.data.get("channel") or "SMS").upper()
+        if channel not in {"SMS", "TELEGRAM", "PUSH"}:
+            channel = "SMS"
+
+        today = timezone.localdate()
+        target_items = []
+        if action == "bulk_remind":
+            max_days = int(request.data.get("max_days") or 3)
+            target_items = list(
+                InstallmentScheduleItem.objects.select_related("contract", "contract__customer")
+                .filter(
+                    status__in=["OVERDUE", "PARTIAL", "UPCOMING"],
+                    contract__status__in=[ContractStatus.SIGNED, ContractStatus.ACTIVE, ContractStatus.OVERDUE, ContractStatus.RESTRUCTURED],
+                    due_date__lte=today + timedelta(days=max_days),
+                )
+                .order_by("due_date")[:50]
+            )
+        else:
+            item_id = request.data.get("schedule_item_id")
+            item = InstallmentScheduleItem.objects.select_related("contract", "contract__customer").filter(id=item_id).first()
+            if not item:
+                return Response({"detail": "Jadval qatori topilmadi."}, status=status.HTTP_404_NOT_FOUND)
+            target_items = [item]
+
+        sent_count = 0
+        for item in target_items:
+            due_uzs = max(0, (item.amount_due + item.penalty_amount) - item.amount_paid)
+            if due_uzs <= 0:
+                continue
+            days_left = (item.due_date - today).days
+            _, tag = self._classify_window(days_left)
+            if days_left < 0:
+                title = f"Nasiya to‘lovi kechikdi ({abs(days_left)} kun)"
+            elif days_left == 0:
+                title = f"Bugun nasiya to‘lov kuni ({due_uzs:,} so‘m)"
+            else:
+                title = f"To‘lovga {days_left} kun qoldi ({due_uzs:,} so‘m)"
+
+            NotificationEvent.objects.create(
+                user=item.contract.customer,
+                channel=channel,
+                category="TRANSACTIONAL",
+                status="delivered",
+                title=title,
+                body_masked=f"Shartnoma #{item.contract.contract_number}, {item.installment_no}-oy to‘lovi ({item.due_date}). Payme/Click orqali to‘lash mumkin.",
+            )
+            PaymentReminderLog.objects.create(
+                contract=item.contract,
+                schedule_item=item,
+                user=item.contract.customer,
+                window_tag=tag if tag in {"DUE_7_DAYS", "DUE_3_DAYS", "DUE_1_DAY", "DUE_TODAY", "OVERDUE"} else "DUE_3_DAYS",
+                channel=channel,
+                amount_due_uzs=due_uzs,
+                due_date=item.due_date,
+                sent_by=request.user,
+                status="SENT",
+            )
+            sent_count += 1
+
+        AuditLog.record(
+            actor=request.user,
+            action="UPCOMING_PAYMENT_REMINDERS_SENT",
+            object_type="InstallmentScheduleItem",
+            object_id=action,
+            reason=f"{sent_count} ta mijozga {channel} eslatmasi yuborildi",
+            after={"sent_count": sent_count, "channel": channel},
+        )
+        return Response({"sent_count": sent_count, "channel": channel, "detail": f"{sent_count} ta mijozga {channel} eslatmasi yuborildi."})
+
+
+class AdminScoringReportsView(APIView):
+    """KATM Credit Bureau, MIB Debt & 50% DSTI Scoring telemetry monitor for Operations/Risk."""
+
+    permission_classes = [HasRolePermission]
+    allowed_roles = ADMIN_ROLES | {"RISK_ANALYST", "FINANCE_OPERATIONS", "FINANCE_OFFICER", "AUDITOR"}
+
+    def get(self, request):
+        reports = ExternalScoringReport.objects.select_related("user").all()[:40]
+        return Response(
+            {
+                "reports": [
+                    {
+                        "id": str(r.id),
+                        "check_reference": r.check_reference,
+                        "provider_mode": r.provider_mode,
+                        "customer_name": r.user.full_name,
+                        "pinfl_masked": r.pinfl_masked,
+                        "inn_masked": r.inn_masked,
+                        "katm_score": r.katm_score,
+                        "external_credit_history_grade": r.external_credit_history_grade,
+                        "external_active_credits_count": r.external_active_credits_count,
+                        "external_total_debt_uzs": r.external_total_debt_uzs,
+                        "mib_status": r.mib_status,
+                        "mib_debt_uzs": r.mib_debt_uzs,
+                        "mib_active_cases_count": r.mib_active_cases_count,
+                        "external_overdue_days_max": r.external_overdue_days_max,
+                        "monthly_income_uzs": r.monthly_income_uzs,
+                        "external_monthly_obligations_uzs": r.external_monthly_obligations_uzs,
+                        "zarvon_active_monthly_uzs": r.zarvon_active_monthly_uzs,
+                        "projected_new_monthly_uzs": r.projected_new_monthly_uzs,
+                        "dsti_before_pct": r.dsti_before_pct,
+                        "dsti_after_pct": r.dsti_after_pct,
+                        "max_safe_monthly_uzs": r.max_safe_monthly_uzs,
+                        "recommended_limit_uzs": r.recommended_limit_uzs,
+                        "decision": r.decision,
+                        "decision_reasons": r.decision_reasons,
+                        "external_obligations_breakdown": r.external_obligations_breakdown,
+                        "mib_details": r.mib_details,
+                        "is_demo": r.is_demo,
+                        "created_at": r.created_at,
+                    }
+                    for r in reports
+                ],
+                "summary": {
+                    "total": ExternalScoringReport.objects.count(),
+                    "approved": ExternalScoringReport.objects.filter(decision="APPROVE").count(),
+                    "manual_review": ExternalScoringReport.objects.filter(decision="MANUAL_REVIEW").count(),
+                    "declined": ExternalScoringReport.objects.filter(decision="DECLINE").count(),
+                    "mib_blocked": ExternalScoringReport.objects.filter(mib_status="BLOCKED").count(),
+                },
             }
         )

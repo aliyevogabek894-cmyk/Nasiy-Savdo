@@ -13,6 +13,16 @@ SECRET_KEY = os.environ.get(
 )
 ZARVON_FIELD_SECRET = os.environ.get("ZARVON_FIELD_SECRET", SECRET_KEY)
 DEBUG = os.environ.get("DJANGO_DEBUG", "True").lower() == "true"
+ZARVON_SANDBOX_MODE = os.environ.get("ZARVON_SANDBOX_MODE", "True").lower() == "true"
+
+# Payment Gateways & External Bureau Adapters (Sandbox fallback when ZARVON_SANDBOX_MODE=True)
+CLICK_SERVICE_ID = os.environ.get("CLICK_SERVICE_ID", "38491" if ZARVON_SANDBOX_MODE else "")
+CLICK_MERCHANT_ID = os.environ.get("CLICK_MERCHANT_ID", "24810" if ZARVON_SANDBOX_MODE else "")
+CLICK_SECRET_KEY = os.environ.get("CLICK_SECRET_KEY", "zarvon-click-sandbox-secret" if ZARVON_SANDBOX_MODE else "")
+PAYME_MERCHANT_ID = os.environ.get("PAYME_MERCHANT_ID", "65f9a8e10000000000000001" if ZARVON_SANDBOX_MODE else "")
+PAYME_CASHBOX_KEY = os.environ.get("PAYME_CASHBOX_KEY", "zarvon-payme-sandbox-key" if ZARVON_SANDBOX_MODE else "")
+KATM_API_URL = os.environ.get("KATM_API_URL", "")
+MIB_API_URL = os.environ.get("MIB_API_URL", "")
 
 ALLOWED_HOSTS = [
     h.strip()

@@ -244,3 +244,289 @@ class ZarvonMasterSpecificationTests(TestCase):
             self.client.post(f"/api/v1/accounts/maker-checker/{mc.id}/decide/", {"decision": "APPROVED", "decision_note": "Self"}, format="json", HTTP_X_MFA_CODE="123456").status_code,
             403,
         )
+
+    def test_click_prepare_complete_signature_and_settlement(self):
+        from django.conf import settings
+        from django.utils import timezone
+        from apps.finance.psp import compute_click_signature
+        from apps.finance.models import CustomerLimit, InstallmentContract, PspTransaction
+        from apps.governance.models import SecurityEvent
+
+        CustomerConsent.objects.create(user=self.customer, purpose="IDENTITY", is_granted=True)
+        CustomerConsent.objects.create(user=self.customer, purpose="CREDIT_BUREAU", is_granted=True)
+        CustomerLimit.objects.update_or_create(user=self.customer, defaults={"total_limit_uzs": 30_000_000, "used_limit_uzs": 0})
+        self.client.force_authenticate(user=self.customer)
+
+        order_res = self.client.post(
+            "/api/v1/commerce/checkout/",
+            {
+                "idempotency_key": f"chk-clk-{uuid.uuid4().hex[:6]}",
+                "items": [{"product_id": str(self.prod_a.id), "quantity": 1}],
+                "payment_channel": "ZARVON_NASIYA",
+                "plan_id": str(self.plan12.id),
+            },
+            format="json",
+        )
+        self.assertEqual(order_res.status_code, 201)
+        contract_num = order_res.json()["finance"]["contract_number"]
+        monthly = order_res.json()["finance"]["monthly_payment"]
+
+        # Tampered Click MD5 signature must fail with -1 and record SecurityEvent
+        bad_click = self.client.post(
+            "/api/v1/finance/psp/click/",
+            {
+                "click_trans_id": "998811",
+                "service_id": settings.CLICK_SERVICE_ID,
+                "merchant_trans_id": contract_num,
+                "amount": str(monthly),
+                "action": "0",
+                "sign_time": "2026-11-14 12:00:00",
+                "sign_string": "0" * 32,
+            },
+            format="json",
+        )
+        self.assertEqual(bad_click.status_code, 200)
+        self.assertEqual(bad_click.json()["error"], -1)
+        self.assertTrue(SecurityEvent.objects.filter(event_type="INVALID_CLICK_SIGNATURE").exists())
+
+        # Valid Prepare (action=0) followed by Complete (action=1)
+        sign_time = timezone.now().strftime("%Y-%m-%d %H:%M:%S")
+        prep_sig = compute_click_signature(
+            click_trans_id="77001122",
+            service_id=settings.CLICK_SERVICE_ID,
+            secret_key=settings.CLICK_SECRET_KEY,
+            merchant_trans_id=contract_num,
+            amount=str(monthly),
+            action="0",
+            sign_time=sign_time,
+        )
+        prep = self.client.post(
+            "/api/v1/finance/psp/click/",
+            {
+                "click_trans_id": "77001122",
+                "service_id": settings.CLICK_SERVICE_ID,
+                "merchant_trans_id": contract_num,
+                "amount": str(monthly),
+                "action": "0",
+                "sign_time": sign_time,
+                "sign_string": prep_sig,
+            },
+            format="json",
+        )
+        self.assertEqual(prep.json()["error"], 0)
+        prep_id = prep.json()["merchant_prepare_id"]
+
+        comp_sig = compute_click_signature(
+            click_trans_id="77001122",
+            service_id=settings.CLICK_SERVICE_ID,
+            secret_key=settings.CLICK_SECRET_KEY,
+            merchant_trans_id=contract_num,
+            merchant_prepare_id=prep_id,
+            amount=str(monthly),
+            action="1",
+            sign_time=sign_time,
+        )
+        comp = self.client.post(
+            "/api/v1/finance/psp/click/",
+            {
+                "click_trans_id": "77001122",
+                "service_id": settings.CLICK_SERVICE_ID,
+                "merchant_trans_id": contract_num,
+                "merchant_prepare_id": prep_id,
+                "amount": str(monthly),
+                "action": "1",
+                "sign_time": sign_time,
+                "sign_string": comp_sig,
+            },
+            format="json",
+        )
+        self.assertEqual(comp.json()["error"], 0)
+        tx = PspTransaction.objects.get(psp_provider="Click", external_trans_id="77001122")
+        self.assertEqual(tx.action_stage, "PERFORMED")
+        self.assertEqual(tx.state_code, 2)
+        c = InstallmentContract.objects.get(contract_number=contract_num)
+        self.assertLess(c.remaining_balance, c.total_payable)
+
+    def test_payme_jsonrpc_auth_and_perform(self):
+        import base64
+        from django.conf import settings
+        from apps.commerce.models import Order, OrderStatus
+        from apps.finance.models import PspTransaction
+
+        self.client.force_authenticate(user=self.customer)
+        ord_res = self.client.post(
+            "/api/v1/commerce/checkout/",
+            {
+                "idempotency_key": f"chk-pm-{uuid.uuid4().hex[:6]}",
+                "items": [{"product_id": str(self.prod_a.id), "quantity": 1}],
+                "payment_channel": "DIRECT_PAY",
+                "psp_provider": "Payme",
+            },
+            format="json",
+        )
+        self.assertEqual(ord_res.status_code, 201)
+        order_num = ord_res.json()["order_number"]
+        order = Order.objects.get(order_number=order_num)
+        order.status = OrderStatus.AWAITING_FINANCE
+        order.save(update_fields=["status"])
+
+        # Missing Basic Auth -> JSON-RPC -32504
+        unauth = self.client.post(
+            "/api/v1/finance/psp/payme/",
+            {"jsonrpc": "2.0", "id": 1, "method": "CheckPerformTransaction", "params": {"amount": 100000, "account": {"order_id": order_num}}},
+            format="json",
+        )
+        self.assertEqual(unauth.json()["error"]["code"], -32504)
+
+        auth_hdr = "Basic " + base64.b64encode(f"Paycom:{settings.PAYME_CASHBOX_KEY}".encode("utf-8")).decode("utf-8")
+        # Wrong amount -> -31001
+        bad_amt = self.client.post(
+            "/api/v1/finance/psp/payme/",
+            {"jsonrpc": "2.0", "id": 2, "method": "CheckPerformTransaction", "params": {"amount": 12300, "account": {"order_id": order_num}}},
+            format="json",
+            HTTP_AUTHORIZATION=auth_hdr,
+        )
+        self.assertEqual(bad_amt.json()["error"]["code"], -31001)
+
+        tiyin = order.total_amount * 100
+        ok_chk = self.client.post(
+            "/api/v1/finance/psp/payme/",
+            {"jsonrpc": "2.0", "id": 3, "method": "CheckPerformTransaction", "params": {"amount": tiyin, "account": {"order_id": order_num}}},
+            format="json",
+            HTTP_AUTHORIZATION=auth_hdr,
+        )
+        self.assertTrue(ok_chk.json()["result"]["allow"])
+
+        cr = self.client.post(
+            "/api/v1/finance/psp/payme/",
+            {"jsonrpc": "2.0", "id": 4, "method": "CreateTransaction", "params": {"id": "pm_test_101", "amount": tiyin, "account": {"order_id": order_num}}},
+            format="json",
+            HTTP_AUTHORIZATION=auth_hdr,
+        )
+        self.assertEqual(cr.json()["result"]["state"], 1)
+
+        pf = self.client.post(
+            "/api/v1/finance/psp/payme/",
+            {"jsonrpc": "2.0", "id": 5, "method": "PerformTransaction", "params": {"id": "pm_test_101"}},
+            format="json",
+            HTTP_AUTHORIZATION=auth_hdr,
+        )
+        self.assertEqual(pf.json()["result"]["state"], 2)
+        order.refresh_from_db()
+        self.assertEqual(order.status, OrderStatus.CONFIRMED)
+        self.assertTrue(PspTransaction.objects.filter(psp_provider="Payme", external_trans_id="pm_test_101", state_code=2).exists())
+
+    def test_katm_mib_inn_dsti_and_sandbox_demo_switch(self):
+        from django.test import override_settings
+        from apps.finance.models import ExternalScoringReport
+
+        # Sandbox demo role switch must work even when DEBUG=False (Render live config)
+        with override_settings(DEBUG=False, ZARVON_SANDBOX_MODE=True):
+            sw = self.client.post("/api/v1/auth/demo-switch/", {"phone": self.customer.phone}, format="json")
+            self.assertEqual(sw.status_code, 200)
+            self.assertEqual(sw.json()["user"]["phone"], self.customer.phone)
+            me = self.client.get("/api/v1/auth/me/")
+            self.assertTrue(me.json()["authenticated"])
+
+        CustomerConsent.objects.create(user=self.customer, purpose="IDENTITY", is_granted=True)
+        CustomerConsent.objects.create(user=self.customer, purpose="CREDIT_BUREAU", is_granted=True)
+        self.client.force_authenticate(user=self.customer)
+
+        # Invalid 8-digit INN rejected
+        bad_inn = self.client.post(
+            "/api/v1/finance/kyc/verify/",
+            {"pinfl": "31405940010012", "inn": "12345678", "passport": "AD1234567", "birth_year": 1994, "liveness_passed": True},
+            format="json",
+        )
+        self.assertEqual(bad_inn.status_code, 400)
+
+        # MIB debt scenario -> BLOCKED & DECLINE
+        mib_res = self.client.post(
+            "/api/v1/finance/kyc/verify/",
+            {"pinfl": "31405940010088", "inn": "305112849", "passport": "AD1234567", "birth_year": 1994, "monthly_income_uzs": 9_000_000, "scenario": "mib_debt", "liveness_passed": True},
+            format="json",
+        )
+        self.assertEqual(mib_res.status_code, 200)
+        self.assertEqual(mib_res.json()["decision"], "DECLINE")
+        self.assertEqual(mib_res.json()["scoring_report"]["mib_status"], "BLOCKED")
+        self.assertGreater(mib_res.json()["scoring_report"]["mib_debt_uzs"], 0)
+
+        # High DSTI > 50% -> DECLINE
+        dsti_res = self.client.post(
+            "/api/v1/finance/kyc/verify/",
+            {"pinfl": "31405940010077", "inn": "305112849", "passport": "AD1234567", "birth_year": 1994, "monthly_income_uzs": 5_000_000, "scenario": "high_debt", "liveness_passed": True},
+            format="json",
+        )
+        self.assertEqual(dsti_res.status_code, 200)
+        self.assertEqual(dsti_res.json()["decision"], "DECLINE")
+        self.assertGreaterEqual(dsti_res.json()["scoring_report"]["dsti_before_pct"], 50.0)
+
+        # Clean scenario -> APPROVE + masked INN saved
+        clean_res = self.client.post(
+            "/api/v1/finance/kyc/verify/",
+            {"pinfl": "31405940010012", "inn": "305112849", "passport": "AD1234567", "birth_year": 1994, "monthly_income_uzs": 12_000_000, "scenario": "clean", "liveness_passed": True},
+            format="json",
+        )
+        self.assertEqual(clean_res.status_code, 200)
+        self.assertEqual(clean_res.json()["decision"], "APPROVE")
+        self.assertEqual(clean_res.json()["scoring_report"]["inn_masked"], "305****49")
+        self.assertGreaterEqual(ExternalScoringReport.objects.filter(user=self.customer).count(), 3)
+
+    def test_payment_cards_and_due_monitor_reminders(self):
+        from datetime import timedelta
+        from django.utils import timezone
+        from apps.finance.models import CustomerLimit, InstallmentContract, PaymentCard, PaymentReminderLog
+
+        # Masked PaymentCard vault check
+        self.client.force_authenticate(user=self.customer)
+        c_res = self.client.post(
+            "/api/v1/finance/cards/",
+            {"card_number": "8600 1234 5678 9012", "expiry": "08/28", "provider": "Payme"},
+            format="json",
+        )
+        self.assertEqual(c_res.status_code, 201)
+        card = c_res.json()["card"]
+        self.assertEqual(card["card_brand"], "Uzcard")
+        self.assertEqual(card["card_masked_pan"], "8600 **** **** 9012")
+        self.assertNotIn("12345678", str(c_res.json()))
+        self.assertTrue(PaymentCard.objects.filter(user=self.customer).exists())
+
+        # Create contract with due item in 2 days -> Due Monitor detects + sends SMS reminder
+        CustomerConsent.objects.create(user=self.customer, purpose="IDENTITY", is_granted=True)
+        CustomerConsent.objects.create(user=self.customer, purpose="CREDIT_BUREAU", is_granted=True)
+        CustomerLimit.objects.update_or_create(user=self.customer, defaults={"total_limit_uzs": 30_000_000, "used_limit_uzs": 0})
+        chk = self.client.post(
+            "/api/v1/commerce/checkout/",
+            {
+                "idempotency_key": f"chk-due-{uuid.uuid4().hex[:6]}",
+                "items": [{"product_id": str(self.prod_a.id), "quantity": 1}],
+                "payment_channel": "ZARVON_NASIYA",
+                "plan_id": str(self.plan12.id),
+            },
+            format="json",
+        )
+        c_num = chk.json()["finance"]["contract_number"]
+        contract = InstallmentContract.objects.get(contract_number=c_num)
+        due_item = contract.schedule_items.first()
+        due_item.due_date = timezone.localdate() + timedelta(days=2)
+        due_item.save(update_fields=["due_date"])
+
+        # Customer cabinet shows due_alerts countdown
+        cab = self.client.get("/api/v1/finance/cabinet/")
+        self.assertEqual(cab.status_code, 200)
+        self.assertTrue(any(a["days_until_due"] == 2 and a["contract_number"] == c_num for a in cab.json()["due_alerts"]))
+
+        # Operations due-monitor lists and sends reminder
+        self.client.force_authenticate(user=self.super_admin)
+        dm_get = self.client.get("/api/v1/finance/due-monitor/")
+        self.assertEqual(dm_get.status_code, 200)
+        self.assertGreaterEqual(dm_get.json()["summary"]["due_3_days_count"], 1)
+
+        dm_post = self.client.post(
+            "/api/v1/finance/due-monitor/",
+            {"action": "send_one", "schedule_item_id": str(due_item.id), "channel": "SMS"},
+            format="json",
+        )
+        self.assertEqual(dm_post.status_code, 200)
+        self.assertEqual(dm_post.json()["sent_count"], 1)
+        self.assertTrue(PaymentReminderLog.objects.filter(schedule_item=due_item, channel="SMS").exists())

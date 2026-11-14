@@ -1,5 +1,6 @@
 """Cart, Multi-Seller Checkout, Atomic Reservations, Sub-Order Lifecycle, Delivery OTP & Returns."""
 import uuid
+from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 from rest_framework import permissions, status
@@ -31,6 +32,7 @@ from apps.finance.models import (
     InstallmentPlan,
     LimitEvent,
     PaymentRecord,
+    PspTransaction,
 )
 from apps.finance.providers import ComplianceViolationError, OwnInstallmentProvider, PartnerFinanceProvider
 from apps.governance.models import AuditLog, BhmValue, ComplianceRuleVersion, NotificationEvent
@@ -383,14 +385,30 @@ class CheckoutView(APIView):
 
         else:
             # Direct Pay via local PSP adapter (Payme / Click / Uzum Bank / Paynet / Uzcard-Humo)
+            psp_name = str(request.data.get("psp_provider") or "Payme").strip()
+            ext_id = f"PAY-{uuid.uuid4().hex[:10].upper()}"
             PaymentRecord.objects.create(
-                payment_intent_id=f"PAY-{uuid.uuid4().hex[:10].upper()}",
-                provider=request.data.get("psp_provider") or "Payme",
+                payment_intent_id=ext_id,
+                provider=psp_name,
                 user=request.user,
                 order=master,
                 amount=total_amount,
                 status="SUCCEEDED",
                 reconciliation_ref=f"REC-{order_num}",
+                is_demo=settings.ZARVON_SANDBOX_MODE,
+            )
+            PspTransaction.objects.create(
+                psp_provider=psp_name,
+                external_trans_id=ext_id,
+                merchant_trans_id=order_num,
+                action_stage="PERFORMED",
+                amount_tiyin=int(total_amount) * 100,
+                state_code=2,
+                signature_verified=True,
+                idempotency_key=f"direct-{ext_id}",
+                order=master,
+                raw_payload_sanitized={"channel": "CHECKOUT_DIRECT_PAY", "psp": psp_name, "sandbox": settings.ZARVON_SANDBOX_MODE},
+                is_demo=settings.ZARVON_SANDBOX_MODE,
             )
 
         if not items_input:

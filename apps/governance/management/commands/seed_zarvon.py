@@ -40,7 +40,8 @@ class Command(BaseCommand):
     @transaction.atomic
     def handle(self, *args, **options):
         if User.objects.filter(phone="+998901110001").exists():
-            self.stdout.write(self.style.WARNING("Ma'lumotlar bazasi allaqachon to‘ldirilgan."))
+            self._ensure_v2_samples()
+            self.stdout.write(self.style.WARNING("Ma'lumotlar bazasi allaqachon to‘ldirilgan (v2 namunalar tekshirildi)."))
             return
 
         # 1. Governance & Statutory Compliance
@@ -312,6 +313,15 @@ class Command(BaseCommand):
         first_item.status = "PAID"
         first_item.paid_at = timezone.now() - timedelta(days=1)
         first_item.save()
+        # Yaqinlashayotgan to‘lov sanalari (2 kun va 5 kun qoldi — Due Monitor va mijoz ogohlantiruvi uchun)
+        second_item = c1.schedule_items.filter(installment_no=2).first()
+        if second_item:
+            second_item.due_date = timezone.localdate() + timedelta(days=2)
+            second_item.save(update_fields=["due_date"])
+        third_item = c1.schedule_items.filter(installment_no=3).first()
+        if third_item:
+            third_item.due_date = timezone.localdate() + timedelta(days=5)
+            third_item.save(update_fields=["due_date"])
 
         # Order 2: Shipped with active Delivery OTP (ready to test handover!)
         ord2 = Order.objects.create(
@@ -406,4 +416,141 @@ class Command(BaseCommand):
         )
         NotificationEvent.objects.create(user=customer, channel="TELEGRAM", category="TRANSACTIONAL", status="delivered", title="To‘lov eslatmasi", body_masked="Shartnoma #NSY-261101-9001 bo‘yicha navbatdagi to‘lov sanasi yaqinlashmoqda.")
         AuditLog.record(actor=super_admin, action="PLATFORM_SEEDED", object_type="System", reason="ZARVON Sandbox/Demo muhiti ishga tushirildi")
+        self._ensure_v2_samples()
         self.stdout.write(self.style.SUCCESS("ZARVON ma'lumotlar bazasi muvaffaqiyatli to'ldirildi!"))
+
+    def _ensure_v2_samples(self):
+        """Idempotently populate KATM/MIB reports, tokenized cards, Click/Payme traces & due-soon items."""
+        from django.conf import settings
+        from config.utils import encrypt_field
+        from apps.finance.models import (
+            ExternalScoringReport,
+            InstallmentContract,
+            PaymentCard,
+            PaymentReminderLog,
+            PspTransaction,
+        )
+
+        today = timezone.localdate()
+        customer = User.objects.filter(phone="+998901110001").first()
+        customer_new = User.objects.filter(phone="+998901110002").first()
+        coll_agent = User.objects.filter(phone="+998909990005").first()
+        if not customer:
+            return
+
+        if not customer.inn_hash:
+            customer.set_identity_fields(pinfl="31405940010012", passport="AD1234567", inn="305112849")
+            customer.save(update_fields=["pinfl_hash", "pinfl_encrypted", "passport_encrypted", "inn_hash", "inn_encrypted"])
+
+        c1 = InstallmentContract.objects.filter(contract_number="NSY-261101-9001").first()
+        if c1:
+            it2 = c1.schedule_items.filter(installment_no=2, status__in=["UPCOMING", "PARTIAL"]).first()
+            if it2 and (it2.due_date - today).days > 4:
+                it2.due_date = today + timedelta(days=2)
+                it2.save(update_fields=["due_date"])
+            it3 = c1.schedule_items.filter(installment_no=3, status__in=["UPCOMING", "PARTIAL"]).first()
+            if it3 and (it3.due_date - today).days > 10:
+                it3.due_date = today + timedelta(days=5)
+                it3.save(update_fields=["due_date"])
+
+        from apps.finance.scoring import run_katm_and_mib_scoring
+        if not ExternalScoringReport.objects.filter(user=customer).exists():
+            run_katm_and_mib_scoring(
+                user=customer,
+                pinfl="31405940010012",
+                inn="305112849",
+                birth_year=1994,
+                monthly_income_uzs=9_500_000,
+                requested_purchase_uzs=4_200_000,
+                requested_months=12,
+                scenario="moderate_credit",
+            )
+
+        if customer_new and not ExternalScoringReport.objects.filter(user=customer_new).exists():
+            run_katm_and_mib_scoring(
+                user=customer_new,
+                pinfl="41205960010077",
+                inn="",
+                birth_year=1996,
+                monthly_income_uzs=4_500_000,
+                requested_purchase_uzs=3_290_000,
+                requested_months=12,
+                scenario="high_debt",
+            )
+
+        if not PaymentCard.objects.filter(user=customer).exists():
+            PaymentCard.objects.create(
+                user=customer,
+                provider="Uzcard/Humo",
+                card_brand="Uzcard",
+                card_token_encrypted=encrypt_field("tok_seed_uzcard_8600_7742"),
+                card_masked_pan="8600 **** **** 7742",
+                expiry_masked="**/28",
+                card_holder=customer.full_name,
+                is_verified=True,
+                is_default=True,
+                auto_debit_enabled=True,
+                is_demo=settings.ZARVON_SANDBOX_MODE,
+            )
+            PaymentCard.objects.create(
+                user=customer,
+                provider="Click",
+                card_brand="Humo",
+                card_token_encrypted=encrypt_field("tok_seed_humo_9860_3319"),
+                card_masked_pan="9860 **** **** 3319",
+                expiry_masked="**/29",
+                card_holder=customer.full_name,
+                is_verified=True,
+                is_default=False,
+                auto_debit_enabled=True,
+                is_demo=settings.ZARVON_SANDBOX_MODE,
+            )
+
+        if not PspTransaction.objects.exists():
+            from apps.commerce.models import Order
+            ord1 = Order.objects.filter(order_number="ZRV-261101-1001A").first()
+            ord2 = Order.objects.filter(order_number="ZRV-261112-2002B").first()
+            PspTransaction.objects.create(
+                psp_provider="Payme",
+                external_trans_id="pm_seed_787500",
+                merchant_trans_id="NSY-261101-9001",
+                action_stage="PERFORMED",
+                amount_tiyin=78_750_000,
+                state_code=2,
+                signature_verified=True,
+                idempotency_key="seed-payme-c1-1",
+                order=ord1,
+                contract=c1,
+                raw_payload_sanitized={"method": "PerformTransaction", "sandbox": True},
+                is_demo=True,
+            )
+            if ord2:
+                PspTransaction.objects.create(
+                    psp_provider="Click",
+                    external_trans_id="9041288101",
+                    merchant_trans_id=ord2.order_number,
+                    merchant_prepare_id="PREP-SEED2002",
+                    action_stage="PERFORMED",
+                    amount_tiyin=int(ord2.total_amount) * 100,
+                    state_code=2,
+                    signature_verified=True,
+                    idempotency_key="seed-click-ord2",
+                    order=ord2,
+                    raw_payload_sanitized={"action": "1", "sandbox": True},
+                    is_demo=True,
+                )
+
+        if c1 and not PaymentReminderLog.objects.filter(contract=c1).exists():
+            due_it = c1.schedule_items.filter(installment_no=2).first()
+            if due_it:
+                PaymentReminderLog.objects.create(
+                    contract=c1,
+                    schedule_item=due_it,
+                    user=customer,
+                    window_tag="DUE_3_DAYS",
+                    channel="SMS",
+                    amount_due_uzs=due_it.amount_due,
+                    due_date=due_it.due_date,
+                    sent_by=coll_agent,
+                    status="SENT",
+                )

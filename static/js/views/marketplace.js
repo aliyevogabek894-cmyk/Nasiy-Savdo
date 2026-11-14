@@ -461,27 +461,51 @@ export async function renderProductDetailView(container, slug, reloadCartBadge) 
     }
   `;
 
-  // Live Interactive Nasiya Calculator
+  // Live Interactive Uzum-Style Month Pills + Transparent Nasiya Calculator
   let activeMonths = 12;
   const runCalc = async () => {
     const out = document.getElementById("prod-calc-output");
     if (!out) return;
     const downPay = Number(document.getElementById("prod-down-pay")?.value || 0);
     try {
-      const q = await apiFetch("/api/v1/finance/calculator/", {
-        method: "POST",
-        body: JSON.stringify({
-          price: p.cash_price,
-          down_payment: downPay,
-          months: activeMonths,
-          category_installment_allowed: p.category_installment_allowed,
+      const [q, q3, q6, q9, q12] = await Promise.all([
+        apiFetch("/api/v1/finance/calculator/", {
+          method: "POST",
+          body: JSON.stringify({
+            price: p.cash_price,
+            down_payment: downPay,
+            months: activeMonths,
+            category_installment_allowed: p.category_installment_allowed,
+          }),
         }),
+        ...[3, 6, 9, 12].map((m) =>
+          apiFetch("/api/v1/finance/calculator/", {
+            method: "POST",
+            body: JSON.stringify({
+              price: p.cash_price,
+              down_payment: downPay,
+              months: m,
+              category_installment_allowed: p.category_installment_allowed,
+            }),
+          }).catch(() => null)
+        ),
+      ]);
+
+      const byM = { 3: q3, 6: q6, 9: q9, 12: q12 };
+      container.querySelectorAll("[data-calc-months]").forEach((btn) => {
+        const m = Number(btn.dataset.calcMonths);
+        const qm = byM[m];
+        btn.className = m === activeMonths ? "month-pill-btn active" : "month-pill-btn";
+        btn.innerHTML = qm
+          ? `<strong>${m} oy</strong><small>${fmtUzs(qm.monthly_payment)}/oy</small>`
+          : `<strong>${m} oy</strong>`;
       });
+
       out.innerHTML = `
         <div class="grid-2 tabular" style="gap:8px;">
           <div class="kpi-card">
             <div class="kpi-label">Oylik to‘lov (${q.months} oy)</div>
-            <div class="kpi-value">${fmtUzs(q.monthly_payment)}</div>
+            <div class="kpi-value" style="color:var(--navy-700);">${fmtUzs(q.monthly_payment)}</div>
           </div>
           <div class="kpi-card">
             <div class="kpi-label">Jami to‘lanadigan summa</div>
@@ -492,7 +516,17 @@ export async function renderProductDetailView(container, slug, reloadCartBadge) 
           Asosiy summa: <strong>${fmtUzs(q.principal)}</strong> • Ustama: <strong>${fmtUzs(q.markup_amount)}</strong> •
           Komissiya: <strong>${fmtUzs(q.commission_amount)}</strong> • Yillik yuklama: <strong>${q.annualized_extra_pct}%</strong> (Chegara ≤ 50%)
         </div>
-        <div class="text-xs text-muted mt-1">${esc(q.transparency_notice)}</div>
+        <div class="flex-between mt-2">
+          <span class="text-xs text-muted">${esc(q.transparency_notice)}</span>
+          <a href="#customer/kyc" class="badge badge-navy">⚡ 1 daqiqada KATM + MIB limitini tekshirish →</a>
+        </div>
+        <div class="psp-trust-strip mt-2" style="padding:8px 10px;">
+          <span class="text-xs fw-bold">Qulay to‘lov:</span>
+          <span class="psp-chip psp-chip-payme">Payme</span>
+          <span class="psp-chip psp-chip-click">Click</span>
+          <span class="psp-chip psp-chip-uzum">Uzum Bank</span>
+          <span class="psp-chip psp-chip-paynet">Paynet</span>
+        </div>
       `;
     } catch (err) {
       out.innerHTML = `<div class="badge badge-danger">⚠ ${esc(err.message)}</div>`;
@@ -500,13 +534,12 @@ export async function renderProductDetailView(container, slug, reloadCartBadge) 
   };
 
   if (p.installment_eligible) {
+    const pillRow = container.querySelector("[data-calc-months]")?.parentElement;
+    if (pillRow) pillRow.className = "month-pill-grid mb-2";
     runCalc();
     container.querySelectorAll("[data-calc-months]").forEach((btn) => {
       btn.addEventListener("click", () => {
         activeMonths = Number(btn.dataset.calcMonths);
-        container.querySelectorAll("[data-calc-months]").forEach((b) => {
-          b.className = b === btn ? "btn btn-sm btn-primary" : "btn btn-sm btn-outline";
-        });
         runCalc();
       });
     });

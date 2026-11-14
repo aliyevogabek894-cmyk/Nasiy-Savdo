@@ -503,23 +503,24 @@ h4, .h4 { font-size: 1rem; line-height: 1.4; margin: 0 0 6px; font-weight: 700; 
   opacity: 0.85;
 }
 
-/* Product Card (Section 30.3) */
+/* Product Card — Uzum Nasiya & Alif Shop Inspired Crisp Gallery */
 .product-card {
   background: var(--bg-surface);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-md);
+  border: 1.5px solid var(--border-color);
+  border-radius: 16px;
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  transition: transform var(--transition-fast), box-shadow var(--transition-fast);
+  transition: transform var(--transition-fast), box-shadow var(--transition-fast), border-color var(--transition-fast);
 }
 .product-card:hover {
-  transform: translateY(-3px);
-  box-shadow: var(--shadow-md);
+  transform: translateY(-4px);
+  box-shadow: var(--shadow-lg);
+  border-color: var(--navy-400);
 }
 .product-media {
   position: relative;
-  background: var(--bg-subtle);
+  background: #f4f6fa;
   aspect-ratio: 4 / 3;
   display: flex;
   align-items: center;
@@ -527,7 +528,9 @@ h4, .h4 { font-size: 1rem; line-height: 1.4; margin: 0 0 6px; font-weight: 700; 
   padding: 14px;
   cursor: pointer;
 }
-.product-media img { max-height: 100%; object-fit: contain; }
+[data-theme="dark"] .product-media { background: #162338; }
+.product-media img { max-height: 100%; object-fit: contain; transition: transform 0.25s ease; }
+.product-card:hover .product-media img { transform: scale(1.03); }
 .product-badges {
   position: absolute;
   top: 10px;
@@ -577,20 +580,33 @@ h4, .h4 { font-size: 1rem; line-height: 1.4; margin: 0 0 6px; font-weight: 700; 
 .cash-price { font-size: 1.15rem; font-weight: 800; }
 .old-price { font-size: 0.85rem; text-decoration: line-through; color: var(--text-muted); }
 
-/* Transparent Installment Callout Box (Section 28.3 & 30.4) */
+/* Transparent Uzum-Nasiya Style Monthly Pill & Callout (Section 28.3 & 30.4) */
 .nasiya-callout {
-  background: var(--gold-100);
-  border: 1px solid var(--gold-500);
-  border-radius: var(--radius-sm);
+  background: linear-gradient(135deg, #fef9e7 0%, #f9efc9 100%);
+  border: 1.5px solid var(--gold-500);
+  border-radius: 10px;
   padding: 8px 10px;
   font-size: 0.82rem;
 }
-.nasiya-monthly {
-  font-weight: 800;
-  color: var(--navy-900);
-  font-size: 0.95rem;
+[data-theme="dark"] .nasiya-callout {
+  background: rgba(201, 162, 39, 0.14);
+  border-color: var(--gold-500);
 }
-[data-theme="dark"] .nasiya-monthly { color: #fef3c7; }
+.nasiya-monthly {
+  display: inline-block;
+  background: var(--gold-500);
+  color: var(--navy-900);
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-weight: 800;
+  font-size: 0.9rem;
+  font-variant-numeric: tabular-nums;
+  margin-bottom: 3px;
+}
+[data-theme="dark"] .nasiya-monthly {
+  background: var(--gold-500);
+  color: var(--navy-900);
+}
 
 /* Semantic Badges (Icon + Text always paired) */
 .badge {
@@ -846,3 +862,171 @@ table.data-table {
 .progress-track { height: 10px; border-radius: 999px; background: var(--bg-subtle); overflow: hidden; }
 .progress-fill { height: 100%; background: var(--navy-700); }
 .progress-fill-gold { background: var(--gold-500); }
+
+/* Uzum Nasiya 4-Step How-It-Works Strip & PSP Trust Bar */
+.how-strip-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(215px, 1fr));
+  gap: 14px;
+}
+.how-step-card {
+  background: var(--bg-surface);
+  border: 1.5px solid var(--border-color);
+  border-radius: 14px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  position: relative;
+}
+.how-step-num {
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  background: var(--navy-700);
+  color: var(--gold-400);
+  font-weight: 800;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.88rem;
+}
+.psp-trust-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  padding: 12px 16px;
+  border-radius: 14px;
+  background: var(--bg-surface);
+  border: 1.5px solid var(--border-color);
+}
+.psp-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-weight: 700;
+  font-size: 0.82rem;
+  border: 1.5px solid var(--border-color);
+  background: var(--bg-subtle);
+}
+.psp-chip-payme { border-color: #06b6d4; color: #0e7490; background: #ecfeff; }
+.psp-chip-click { border-color: #2563eb; color: #1d4ed8; background: #eff6ff; }
+.psp-chip-uzum  { border-color: #7c3aed; color: #6d28d9; background: #f5f3ff; }
+.psp-chip-paynet { border-color: #059669; color: #047857; background: #ecfdf5; }
+[data-theme="dark"] .psp-chip-payme { background: rgba(6, 182, 212, 0.14); color: #67e8f9; }
+[data-theme="dark"] .psp-chip-click { background: rgba(37, 99, 235, 0.16); color: #93c5fd; }
+[data-theme="dark"] .psp-chip-uzum  { background: rgba(124, 58, 237, 0.16); color: #c4b5fd; }
+[data-theme="dark"] .psp-chip-paynet { background: rgba(5, 150, 105, 0.16); color: #6ee7b7; }
+
+/* Inline Month Pill Calculator Selector (Uzum Nasiya / Alif Style) */
+.month-pill-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+@media (max-width: 560px) { .month-pill-grid { grid-template-columns: repeat(2, 1fr); } }
+.month-pill-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 10px 8px;
+  border-radius: 12px;
+  border: 1.5px solid var(--border-color);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  text-align: center;
+}
+.month-pill-btn strong { font-size: 0.9rem; }
+.month-pill-btn small { font-size: 0.72rem; color: var(--text-muted); font-variant-numeric: tabular-nums; margin-top: 2px; }
+.month-pill-btn.active {
+  border-color: var(--navy-700);
+  background: var(--navy-700);
+  color: #ffffff;
+}
+.month-pill-btn.active small { color: var(--gold-400); font-weight: 700; }
+
+/* Selectable PSP Provider Grid (Checkout Step 2 & Repay Modal) */
+.psp-select-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+}
+.psp-option-card {
+  border: 1.5px solid var(--border-color);
+  border-radius: 12px;
+  padding: 12px;
+  background: var(--bg-surface);
+  cursor: pointer;
+  text-align: left;
+  transition: all var(--transition-fast);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.psp-option-card:hover { border-color: var(--navy-500); }
+.psp-option-card.active {
+  border-color: var(--navy-700);
+  background: var(--navy-50);
+  box-shadow: 0 0 0 2px rgba(23, 54, 93, 0.16);
+}
+[data-theme="dark"] .psp-option-card.active {
+  border-color: var(--gold-500);
+  background: rgba(201, 162, 39, 0.12);
+}
+
+/* Central Bank 50% DSTI Gauge & Bureau Cards */
+.dsti-meter-track {
+  position: relative;
+  height: 14px;
+  border-radius: 999px;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border-color);
+  overflow: visible;
+}
+.dsti-meter-fill {
+  height: 100%;
+  border-radius: 999px;
+  transition: width 0.35s ease;
+}
+.dsti-50-mark {
+  position: absolute;
+  left: 50%;
+  top: -4px;
+  bottom: -4px;
+  width: 2.5px;
+  background: var(--danger-fg);
+  z-index: 2;
+}
+
+/* Upcoming Payment Alert Banners */
+.due-alert-banner {
+  border-radius: 14px;
+  padding: 14px 16px;
+  border: 1.5px solid var(--border-color);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.due-alert-overdue, .due-alert-today {
+  background: var(--danger-bg);
+  border-color: var(--danger-fg);
+  color: var(--danger-fg);
+}
+.due-alert-soon {
+  background: var(--warning-bg);
+  border-color: var(--gold-500);
+  color: var(--warning-fg);
+}
+.due-alert-upcoming {
+  background: var(--info-bg);
+  border-color: var(--navy-500);
+  color: var(--info-fg);
+}

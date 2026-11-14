@@ -50,6 +50,8 @@ export async function renderAdminPortalView(container, refreshAuthCallback) {
     ["nasiya", "⚖ Nasiya & Compliance"],
     ["banks", "🏦 Banklar & Webhook"],
     ["reconciliation", "💰 To‘lov & Reconciliation"],
+    ["due_monitor", "⏰ Yaqin To‘lovlar & Eslatmalar"],
+    ["scoring", "🛡 KATM / MIB & DSTI"],
     ["collections", "📞 Undirish (DPD) & Restrukt."],
     ["fraud", "🚨 Firibgarlik & Xavfsizlik"],
     ["appeals", "💬 Murojaatlar & Apellyatsiya"],
@@ -374,10 +376,43 @@ export async function renderAdminPortalView(container, refreshAuthCallback) {
           }
         };
       } else if (activeTab === "banks") {
-        const bData = await apiFetch("/api/v1/finance/bank-partners/");
+        const [bData, pspData] = await Promise.all([
+          apiFetch("/api/v1/finance/bank-partners/"),
+          apiFetch("/api/v1/finance/psp/checkout/"),
+        ]);
         panel.innerHTML = `
-          <h2 class="mb-3">Bank Hamkorlari Adapterlari va Webhook Idempotency (8.4 / 23.1)</h2>
+          <h2 class="mb-3">Bank Hamkorlari, Click/Payme PSP &amp; Webhook Idempotency (8.4 / 23.1)</h2>
           <p class="text-sm text-secondary mb-3">Biror bankni <strong>TIMEOUT</strong> holatiga o‘tkazib, Multi-Bank Gateway kassada qolgan banklar bilan uzluksiz ishlashini tekshiring.</p>
+          <div class="grid-4 mb-4">
+            <div class="kpi-card"><div class="kpi-label">Jami PSP Tranzaksiyalar</div><div class="kpi-value">${pspData.summary.total_count}</div></div>
+            <div class="kpi-card"><div class="kpi-label">Bajarilgan (PERFORMED)</div><div class="kpi-value">${pspData.summary.performed_count}</div></div>
+            <div class="kpi-card"><div class="kpi-label">Click (Prepare/Complete)</div><div class="kpi-value">${pspData.summary.click_count}</div></div>
+            <div class="kpi-card"><div class="kpi-label">Payme (JSON-RPC 2.0)</div><div class="kpi-value">${pspData.summary.payme_count}</div></div>
+          </div>
+
+          <h3 class="mb-2">Click, Payme, Uzum Bank va Paynet Tranzaksiya Jurnali</h3>
+          <div class="table-wrap mb-4">
+            <table class="data-table text-sm tabular">
+              <thead><tr><th>Provayder</th><th>External ID</th><th>Buyurtma / Shartnoma</th><th>Summa (so‘m / tiyin)</th><th>Bosqich</th><th>Imzo</th><th>Vaqt</th></tr></thead>
+              <tbody>
+                ${pspData.transactions
+                  .map(
+                    (t) => `
+                  <tr>
+                    <td><strong>${esc(t.psp_provider)}</strong></td>
+                    <td class="text-xs">${esc(t.external_trans_id)}</td>
+                    <td class="fw-bold">${esc(t.merchant_trans_id)}</td>
+                    <td><strong>${fmtUzs(t.amount_uzs)}</strong><br><span class="text-xs text-muted">${t.amount_tiyin.toLocaleString()} tiyin</span></td>
+                    <td>${statusBadge(t.action_stage)}</td>
+                    <td>${t.signature_verified ? `<span class="badge badge-success">✓ Tekshirilgan</span>` : `<span class="badge badge-danger">✕ Xato</span>`}</td>
+                    <td class="text-xs">${fmtDate(t.created_at)}</td>
+                  </tr>`
+                  )
+                  .join("") || "<tr><td colspan='7'>Tranzaksiyalar yo‘q</td></tr>"}
+              </tbody>
+            </table>
+          </div>
+
           <div class="table-wrap mb-4">
             <table class="data-table tabular">
               <thead><tr><th>Bank</th><th>Muhit</th><th>Uptime</th><th>Latency</th><th>Holat</th><th>Adapter testi</th></tr></thead>
@@ -405,7 +440,7 @@ export async function renderAdminPortalView(container, refreshAuthCallback) {
           </div>
 
           <div class="flex-between mb-2">
-            <h3>Oxirgi Webhook hodisalari</h3>
+            <h3>Oxirgi Bank Webhook hodisalari</h3>
             <div class="flex-gap">
               <button id="wh-test-ok" class="btn btn-outline btn-sm">✓ Imzolangan webhook testi</button>
               <button id="wh-test-bad" class="btn btn-danger btn-sm">✕ Noto‘g‘ri imzo testi</button>
@@ -739,6 +774,167 @@ export async function renderAdminPortalView(container, refreshAuthCallback) {
             }
           };
         });
+      } else if (activeTab === "due_monitor") {
+        const dm = await apiFetch("/api/v1/finance/due-monitor/");
+        const s = dm.summary;
+        const urgencyBadge = (days) => {
+          if (days < 0) return `<span class="badge badge-danger">⚠ ${Math.abs(days)} kun kechikdi</span>`;
+          if (days === 0) return `<span class="badge badge-danger">🔴 BUGUN to‘lov kuni</span>`;
+          if (days <= 3) return `<span class="badge badge-warning">⏰ ${days} kun qoldi</span>`;
+          if (days <= 7) return `<span class="badge badge-gold">📅 ${days} kun qoldi</span>`;
+          return `<span class="badge badge-info">${days} kun qoldi</span>`;
+        };
+        panel.innerHTML = `
+          <div class="flex-between mb-3">
+            <div>
+              <h2 style="margin:0;">To‘lovga Yaqin Qolgan &amp; Kechikkan Mijozlar Monitori</h2>
+              <div class="text-sm text-secondary">Muddati bugun, 1–3 kun, 4–7 kun va 30 kun ichida keladigan to‘lovlarni kuzating va eslatma yuboring.</div>
+            </div>
+            <div class="flex-gap">
+              <select id="dm-channel" class="form-control" style="width:auto;min-height:38px;">
+                <option value="SMS">SMS</option>
+                <option value="TELEGRAM">Telegram Bot</option>
+                <option value="PUSH">Mobile Push</option>
+              </select>
+              <button id="dm-bulk-3d" class="btn btn-gold btn-sm">⚡ ≤3 kun qolgan barchasiga yuborish</button>
+              <button id="dm-bulk-7d" class="btn btn-outline btn-sm">📢 ≤7 kun qolganlarga yuborish</button>
+            </div>
+          </div>
+
+          <div class="grid-4 mb-4 tabular">
+            <div class="kpi-card" style="border-left:4px solid var(--danger-fg);">
+              <div class="kpi-label">Kechikkan (Overdue)</div>
+              <div class="kpi-value">${s.overdue_count} ta</div>
+              <div class="text-xs text-muted">${fmtUzs(s.overdue_uzs)}</div>
+            </div>
+            <div class="kpi-card" style="border-left:4px solid #dc2626;">
+              <div class="kpi-label">Bugun to‘lov kuni</div>
+              <div class="kpi-value">${s.due_today_count} ta</div>
+              <div class="text-xs text-muted">${fmtUzs(s.due_today_uzs)}</div>
+            </div>
+            <div class="kpi-card" style="border-left:4px solid var(--gold-500);">
+              <div class="kpi-label">1–3 kun qoldi (Shoshilinch)</div>
+              <div class="kpi-value">${s.due_3_days_count} ta</div>
+              <div class="text-xs text-muted">${fmtUzs(s.due_3_days_uzs)}</div>
+            </div>
+            <div class="kpi-card" style="border-left:4px solid var(--navy-600);">
+              <div class="kpi-label">4–7 kun + 30 kun ichida</div>
+              <div class="kpi-value">${s.due_7_days_count + s.upcoming_30_count} ta</div>
+              <div class="text-xs text-muted">${fmtUzs(s.due_7_days_uzs + s.upcoming_30_uzs)}</div>
+            </div>
+          </div>
+
+          <h3>Navbatdagi to‘lovlar ro‘yxati (${dm.queue.length})</h3>
+          <div class="table-wrap mb-4">
+            <table class="data-table text-sm tabular">
+              <thead><tr><th>Mijoz</th><th>Shartnoma</th><th>Oy #</th><th>Sana</th><th>Muddat holati</th><th>To‘lanadigan summa</th><th>Eslatma</th></tr></thead>
+              <tbody>
+                ${dm.queue
+                  .map(
+                    (q) => `
+                  <tr>
+                    <td><strong>${esc(q.customer_name)}</strong><br><span class="text-xs text-muted">${esc(q.customer_phone_masked)}</span></td>
+                    <td class="fw-bold">${esc(q.contract_number)}</td>
+                    <td>${q.installment_no}-oy</td>
+                    <td>${esc(q.due_date)}</td>
+                    <td>${urgencyBadge(q.days_until_due)}</td>
+                    <td class="fw-bold">${fmtUzs(q.amount_due_uzs)}</td>
+                    <td>
+                      ${q.reminded_today ? `<span class="badge badge-success">✓ Bugun yuborilgan</span> ` : ""}
+                      <button class="btn btn-primary btn-sm" data-dm-send="${esc(q.schedule_item_id)}">Eslatma yuborish</button>
+                    </td>
+                  </tr>`
+                  )
+                  .join("") || "<tr><td colspan='7'>Yaqin 30 kun ichida to‘lovlar yo‘q</td></tr>"}
+              </tbody>
+            </table>
+          </div>
+
+          <h3>Yuborilgan eslatmalar jurnali (${dm.recent_reminders.length})</h3>
+          <div class="table-wrap">
+            <table class="data-table text-xs tabular">
+              <thead><tr><th>Mijoz</th><th>Shartnoma</th><th>Oynasi</th><th>Kanal</th><th>Summa</th><th>Muddat</th><th>Vaqt</th></tr></thead>
+              <tbody>
+                ${dm.recent_reminders
+                  .map((r) => `<tr><td>${esc(r.customer_name)}</td><td>${esc(r.contract_number)}</td><td>${esc(r.window_tag)}</td><td><span class="badge badge-navy">${esc(r.channel)}</span></td><td>${fmtUzs(r.amount_due_uzs)}</td><td>${esc(r.due_date)}</td><td>${fmtDate(r.created_at)}</td></tr>`)
+                  .join("") || "<tr><td colspan='7'>Hali eslatmalar yuborilmagan</td></tr>"}
+              </tbody>
+            </table>
+          </div>
+        `;
+        const getChan = () => document.getElementById("dm-channel")?.value || "SMS";
+        panel.querySelectorAll("[data-dm-send]").forEach((btn) => {
+          btn.onclick = async () => {
+            try {
+              const res = await apiFetch("/api/v1/finance/due-monitor/", {
+                method: "POST",
+                body: JSON.stringify({ action: "send_one", schedule_item_id: btn.dataset.dmSend, channel: getChan() }),
+              });
+              showToast(res.detail, "success");
+              load();
+            } catch (err) {
+              showToast(err.message, "error");
+            }
+          };
+        });
+        document.getElementById("dm-bulk-3d").onclick = async () => {
+          try {
+            const res = await apiFetch("/api/v1/finance/due-monitor/", {
+              method: "POST",
+              body: JSON.stringify({ action: "bulk_remind", max_days: 3, channel: getChan() }),
+            });
+            showToast(res.detail, "success");
+            load();
+          } catch (err) {
+            showToast(err.message, "error");
+          }
+        };
+        document.getElementById("dm-bulk-7d").onclick = async () => {
+          try {
+            const res = await apiFetch("/api/v1/finance/due-monitor/", {
+              method: "POST",
+              body: JSON.stringify({ action: "bulk_remind", max_days: 7, channel: getChan() }),
+            });
+            showToast(res.detail, "success");
+            load();
+          } catch (err) {
+            showToast(err.message, "error");
+          }
+        };
+      } else if (activeTab === "scoring") {
+        const sc = await apiFetch("/api/v1/finance/scoring-reports/");
+        panel.innerHTML = `
+          <h2 class="mb-3">INN/PINFL + KATM Kredit Byurosi + MIB Qarzdorlik + 50% DSTI Monitoring</h2>
+          <div class="grid-4 mb-4 tabular">
+            <div class="kpi-card"><div class="kpi-label">Jami Skoringlar</div><div class="kpi-value">${sc.summary.total}</div></div>
+            <div class="kpi-card"><div class="kpi-label">Tasdiqlangan</div><div class="kpi-value">${sc.summary.approved}</div></div>
+            <div class="kpi-card"><div class="kpi-label">Qo‘shimcha ko‘rik</div><div class="kpi-value">${sc.summary.manual_review}</div></div>
+            <div class="kpi-card"><div class="kpi-label">MIB Blok / Rad</div><div class="kpi-value" style="color:var(--danger-fg);">${sc.summary.mib_blocked} / ${sc.summary.declined}</div></div>
+          </div>
+
+          <div class="table-wrap">
+            <table class="data-table text-sm tabular">
+              <thead><tr><th>Mijoz</th><th>PINFL / INN (niqob)</th><th>KATM Ball</th><th>MIB Holati</th><th>Boshqa kredit/oy</th><th>DSTI % (≤50%)</th><th>Limit</th><th>Qaror</th></tr></thead>
+              <tbody>
+                ${sc.reports
+                  .map(
+                    (r) => `
+                  <tr>
+                    <td><strong>${esc(r.customer_name)}</strong><br><span class="text-xs text-muted">${fmtDate(r.created_at)}</span></td>
+                    <td class="text-xs">PINFL: ${esc(r.pinfl_masked)}<br>INN: ${esc(r.inn_masked || "—")}</td>
+                    <td><strong>${r.katm_score}</strong> (${esc(r.external_credit_history_grade)})<br><span class="text-xs text-muted">Kechikish: ${r.external_overdue_days_max} kun</span></td>
+                    <td>${r.mib_status === "BLOCKED" ? `<span class="badge badge-danger">✕ ${fmtUzs(r.mib_debt_uzs)} (${r.mib_active_cases_count})</span>` : `<span class="badge badge-success">✓ Toza</span>`}</td>
+                    <td>${fmtUzs(r.external_monthly_obligations_uzs)}<br><span class="text-xs text-muted">${(r.external_obligations_breakdown || []).length} ta kredit</span></td>
+                    <td><strong>${r.dsti_after_pct}%</strong> (avval ${r.dsti_before_pct}%)<br><span class="text-xs text-muted">Daromad: ${fmtUzs(r.monthly_income_uzs)}</span></td>
+                    <td class="fw-bold">${fmtUzs(r.recommended_limit_uzs)}</td>
+                    <td>${statusBadge(r.decision)}<br><span class="text-xs text-muted">${esc((r.decision_reasons || [])[0] || "")}</span></td>
+                  </tr>`
+                  )
+                  .join("") || "<tr><td colspan='8'>Skoring hisobotlari hali yo‘q</td></tr>"}
+              </tbody>
+            </table>
+          </div>
+        `;
       }
     } catch (err) {
       panel.innerHTML = `

@@ -39,6 +39,7 @@ def serialize_user(user: User) -> dict:
         "is_phone_verified": user.is_phone_verified,
         "kyc_status": user.kyc_status,
         "masked_pinfl": user.get_masked_pinfl(),
+        "masked_inn": user.get_masked_inn(),
         "masked_passport": user.get_masked_passport(),
         "accessible_store_ids": [str(sid) for sid in user.get_accessible_store_ids()],
         "installment_limit": limit_info,
@@ -50,7 +51,7 @@ class MeView(APIView):
 
     def get(self, request):
         demo_accounts = []
-        if settings.DEBUG:
+        if settings.ZARVON_SANDBOX_MODE:
             demo_accounts = [
                 {
                     "phone": u.phone,
@@ -101,14 +102,14 @@ class RequestOtpView(APIView):
             target=target,
             purpose=purpose,
             code_hash=hash_token(code),
-            demo_hint=code if settings.DEBUG else "",
+            demo_hint=code if settings.ZARVON_SANDBOX_MODE else "",
             expires_at=timezone.now() + timezone.timedelta(minutes=5),
         )
         return Response(
             {
                 "challenge_id": str(challenge.id),
                 "expires_in_seconds": 300,
-                "demo_otp_preview": code if settings.DEBUG else None,
+                "demo_otp_preview": code if settings.ZARVON_SANDBOX_MODE else None,
                 "message": "Tasdiqlash kodi yuborildi (Sandbox/Demo rejimida kod ekranda ko‘rsatiladi).",
             }
         )
@@ -168,8 +169,8 @@ class DemoRoleSwitchView(APIView):
     permission_classes = [permissions.AllowAny]
 
     def post(self, request):
-        if not settings.DEBUG:
-            return Response({"detail": "Faqat Sandbox/DEBUG rejimida ruxsat etilgan."}, status=status.HTTP_403_FORBIDDEN)
+        if not settings.ZARVON_SANDBOX_MODE:
+            return Response({"detail": "Faqat Sandbox rejimida ruxsat etilgan."}, status=status.HTTP_403_FORBIDDEN)
         phone = (request.data.get("phone") or "").strip()
         role = (request.data.get("role") or "").strip()
         user = User.objects.filter(phone=phone).first() if phone else User.objects.filter(role=role, is_active=True).first()

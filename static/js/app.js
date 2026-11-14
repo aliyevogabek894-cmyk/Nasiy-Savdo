@@ -11,6 +11,7 @@ import {
 import { renderCartView, renderCheckoutView, renderCustomerCabinetView } from "./views/checkout_customer.js";
 import { renderSellerOnboardingView, renderSellerPortalView } from "./views/seller.js";
 import { renderAdminPortalView } from "./views/admin.js";
+import { enhanceHomeWithUzumSections } from "./views/psp_scoring_ui.js";
 
 function applyTheme(theme) {
   AppState.theme = theme === "dark" ? "dark" : "light";
@@ -248,6 +249,7 @@ async function route() {
       await renderAdminPortalView(main, refreshAuth);
     } else {
       await renderHomeView(main, refreshCartBadge);
+      await enhanceHomeWithUzumSections(main);
     }
   } catch (err) {
     main.innerHTML = `

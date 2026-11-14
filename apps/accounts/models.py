@@ -67,6 +67,8 @@ class User(AbstractBaseUser, PermissionsMixin):
     # Sensitive identity fields stored encrypted + keyed HMAC hash for duplicate prevention
     pinfl_hash = models.CharField(max_length=64, blank=True, db_index=True)
     pinfl_encrypted = models.TextField(blank=True)
+    inn_hash = models.CharField(max_length=64, blank=True, db_index=True)
+    inn_encrypted = models.TextField(blank=True)
     passport_encrypted = models.TextField(blank=True)
     birth_year = models.PositiveIntegerField(null=True, blank=True)
 
@@ -84,17 +86,25 @@ class User(AbstractBaseUser, PermissionsMixin):
         db_table = "users"
         ordering = ["-created_at"]
 
-    def set_identity_fields(self, pinfl: str = "", passport: str = ""):
+    def set_identity_fields(self, pinfl: str = "", passport: str = "", inn: str = ""):
         if pinfl:
             clean_pinfl = pinfl.strip()
             self.pinfl_hash = hash_identifier(clean_pinfl)
             self.pinfl_encrypted = encrypt_field(clean_pinfl)
+        if inn:
+            clean_inn = inn.strip()
+            self.inn_hash = hash_identifier(clean_inn)
+            self.inn_encrypted = encrypt_field(clean_inn)
         if passport:
             self.passport_encrypted = encrypt_field(passport.strip().upper())
 
     def get_masked_pinfl(self) -> str:
         raw = decrypt_field(self.pinfl_encrypted)
         return mask_value(raw, 4, 2) if raw else ""
+
+    def get_masked_inn(self) -> str:
+        raw = decrypt_field(self.inn_encrypted)
+        return mask_value(raw, 3, 2) if raw else ""
 
     def get_masked_passport(self) -> str:
         raw = decrypt_field(self.passport_encrypted)

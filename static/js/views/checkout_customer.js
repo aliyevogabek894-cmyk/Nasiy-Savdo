@@ -1,6 +1,13 @@
 /* Cart, 3-Step Checkout (Nasiya / Multi-Bank / PSP), and Full Customer Cabinet */
 import { apiFetch, closeModal, esc, fmtDate, fmtUzs, genIdempotencyKey, openModal, showToast, statusBadge } from "../api.js";
 import { AppState } from "../i18n.js";
+import {
+  openPspPayModal,
+  renderDueAlertsHtml,
+  renderKatmMibDstiReportHtml,
+  renderSavedCardsHtml,
+  wireSavedCardsActions,
+} from "./psp_scoring_ui.js";
 
 function requireLoginPrompt(container) {
   container.innerHTML = `
@@ -211,7 +218,7 @@ export async function renderCheckoutView(container, reloadCartBadge) {
                 🏦 Multi-Bank Gateway (Sandbox)
               </button>
               <button type="button" class="btn ${paymentChannel === "DIRECT_PAY" ? "btn-primary" : "btn-outline"}" data-ch="DIRECT_PAY">
-                💵 Karta / Payme / Click
+                💵 Click / Payme / Uzum / Karta
               </button>
             </div>
 
@@ -276,9 +283,21 @@ export async function renderCheckoutView(container, reloadCartBadge) {
                 : `
               <div class="card" style="background:var(--navy-50);">
                 <label class="form-label">Mahalliy to‘lov tizimini tanlang (Sandbox PSP)</label>
-                <div class="flex-gap mt-2">
+                <div class="psp-select-grid mt-2">
                   ${["Payme", "Click", "Uzum Bank", "Paynet", "Uzcard/Humo"]
-                    .map((p) => `<button type="button" class="btn btn-sm ${pspProvider === p ? "btn-primary" : "btn-outline"}" data-psp="${p}">${p}</button>`)
+                    .map((p) => {
+                      const desc =
+                        p === "Payme"
+                          ? "JSON-RPC 2.0"
+                          : p === "Click"
+                          ? "Prepare/Complete MD5"
+                          : p === "Uzum Bank"
+                          ? "Tezkor bank"
+                          : p === "Paynet"
+                          ? "Milliy tarmoq"
+                          : "Token karta";
+                      return `<button type="button" class="psp-option-card ${pspProvider === p ? "active" : ""}" data-psp="${p}"><strong>${p}</strong><span class="text-xs text-muted">${desc}</span></button>`;
+                    })
                     .join("")}
                 </div>
               </div>
@@ -379,7 +398,9 @@ export async function renderCheckoutView(container, reloadCartBadge) {
     container.querySelectorAll("[data-psp]").forEach((btn) => {
       btn.addEventListener("click", () => {
         pspProvider = btn.dataset.psp;
-        renderStep();
+        container.querySelectorAll("[data-psp]").forEach((b) => {
+          b.classList.toggle("active", b === btn);
+        });
       });
     });
     document.getElementById("chk-months")?.addEventListener("change", (e) => {
@@ -481,12 +502,42 @@ export async function renderCheckoutView(container, reloadCartBadge) {
                 ? `<div class="nasiya-callout mt-3">Bank gateway arizasi: <strong>${esc(res.finance.application_number)}</strong> — javoblar kabinetingizda!</div>`
                 : ""
             }
+            ${
+              paymentChannel === "DIRECT_PAY"
+                ? `<div class="card mt-3" style="text-align:left;background:var(--bg-subtle);">
+                     <div class="flex-between">
+                       <strong>⚡ ${esc(pspProvider)} Gateway Sandbox Protokoli (${fmtUzs(cart.total_amount)})</strong>
+                       <button id="chk-run-psp-sim" class="btn btn-gold btn-sm">Click / Payme Protokolini Sinash</button>
+                     </div>
+                     <div id="chk-psp-trace" class="text-xs mt-2 text-muted">Buyurtma rasmiylashtirildi. Istasangiz yuqoridagi tugma bilan to‘lov shlyuzining Prepare/Complete yoki JSON-RPC 2.0 izini tekshiring.</div>
+                   </div>`
+                : ""
+            }
             <div class="flex-gap mt-4" style="justify-content:center;">
               <a href="#customer" class="btn btn-primary">Mijoz kabinetiga o‘tish</a>
               <a href="#catalog" class="btn btn-outline">Katalogga qaytish</a>
             </div>
           </div>
         `;
+        document.getElementById("chk-run-psp-sim")?.addEventListener("click", async (e) => {
+          const b = e.currentTarget;
+          b.disabled = true;
+          try {
+            const sim = await apiFetch("/api/v1/finance/psp/checkout/", {
+              method: "POST",
+              body: JSON.stringify({ reference: res.order_number, psp_provider: pspProvider, amount_uzs: cart.total_amount }),
+            });
+            document.getElementById("chk-psp-trace").innerHTML = `
+              <span class="badge badge-success">✓ ${esc(sim.psp_provider)} — ${esc(sim.mode)}</span>
+              <pre class="mt-2" style="background:var(--bg-surface);padding:8px;border-radius:8px;overflow:auto;">${esc(JSON.stringify(sim.trace, null, 2))}</pre>
+            `;
+            showToast(sim.detail, "success");
+          } catch (err) {
+            showToast(err.message, "error");
+          } finally {
+            b.disabled = false;
+          }
+        });
       } catch (err) {
         showToast(err.message, "error");
         btn.disabled = false;
@@ -539,6 +590,7 @@ export async function renderCustomerCabinetView(container, initialTab = "nasiya"
     if (activeTab === "nasiya") {
       const cab = await apiFetch("/api/v1/finance/cabinet/");
       panel.innerHTML = `
+        ${renderDueAlertsHtml(cab.due_alerts)}
         <div class="grid-3 mb-4">
           <div class="kpi-card" style="border-left:4px solid var(--gold-500);">
             <div class="kpi-label">Bo‘sh nasiya limiti (DEMO • ${esc(cab.limit.tier)})</div>
@@ -598,9 +650,19 @@ export async function renderCustomerCabinetView(container, initialTab = "nasiya"
                       <thead><tr><th>#</th><th>Sana</th><th>To‘lov</th><th>To‘langan</th><th>Holat</th></tr></thead>
                       <tbody>
                         ${c.schedule
-                          .map(
-                            (s) => `<tr><td>${s.installment_no}</td><td>${fmtDate(s.due_date)}</td><td>${fmtUzs(s.amount_due)}</td><td>${fmtUzs(s.amount_paid)}</td><td>${statusBadge(s.status)}</td></tr>`
-                          )
+                          .map((s) => {
+                            const dueTag =
+                              s.status === "PAID"
+                                ? ""
+                                : s.days_until_due < 0
+                                ? ` <span class="badge badge-danger">${Math.abs(s.days_until_due)} kun kechikdi</span>`
+                                : s.days_until_due === 0
+                                ? ` <span class="badge badge-danger">BUGUN</span>`
+                                : s.days_until_due <= 7
+                                ? ` <span class="badge badge-warning">${s.days_until_due} kun qoldi</span>`
+                                : "";
+                            return `<tr><td>${s.installment_no}</td><td>${fmtDate(s.due_date)}${dueTag}</td><td>${fmtUzs(s.amount_due)}</td><td>${fmtUzs(s.amount_paid)}</td><td>${statusBadge(s.status)}</td></tr>`;
+                          })
                           .join("")}
                       </tbody>
                     </table>
@@ -616,50 +678,33 @@ export async function renderCustomerCabinetView(container, initialTab = "nasiya"
         btn.addEventListener("click", () => {
           const cid = btn.dataset.payContract;
           const defaultAmt = Number(btn.dataset.amount);
-          const isEarly = btn.dataset.early === "true";
-          openModal(
-            isEarly ? "Muddatidan oldin to‘lash (0% jarima)" : "Jadval bo‘yicha to‘lov",
-            `
-              <p class="text-sm text-secondary">27.1-bo‘limga ko‘ra muddatidan oldin qisman yoki to‘liq to‘lashda hech qanday jarima yoki komissiya olinmaydi.</p>
-              <div class="form-group">
-                <label class="form-label" for="rep-amt">To‘lov summasi (so‘m)</label>
-                <input id="rep-amt" type="number" class="form-control tabular" value="${defaultAmt}" min="10000">
-              </div>
-              <div class="form-group">
-                <label class="form-label" for="rep-method">To‘lov usuli</label>
-                <select id="rep-method" class="form-control">
-                  <option value="Payme">Payme</option>
-                  <option value="Click">Click</option>
-                  <option value="Uzum Bank">Uzum Bank</option>
-                  <option value="Paynet">Paynet</option>
-                  <option value="Uzcard/Humo">Uzcard / Humo</option>
-                </select>
-              </div>
-              <button id="rep-submit" class="btn btn-success" style="width:100%;">To‘lovni tasdiqlash</button>
-            `,
-            () => {
-              document.getElementById("rep-submit").onclick = async () => {
-                try {
-                  const res = await apiFetch(`/api/v1/finance/contracts/${cid}/repay/`, {
-                    method: "POST",
-                    body: JSON.stringify({
-                      amount: Number(document.getElementById("rep-amt").value),
-                      payment_method: document.getElementById("rep-method").value,
-                      is_early_repayment: isEarly,
-                      idempotency_key: genIdempotencyKey("rep"),
-                    }),
-                  });
-                  closeModal();
-                  showToast(`To‘landi: ${fmtUzs(res.applied_amount)} (Erta to‘lov komissiyasi: 0 so‘m)!`, "success");
-                  load();
-                } catch (err) {
-                  showToast(err.message, "error");
-                }
-              };
-            }
-          );
+          const cObj = (cab.contracts || []).find((x) => x.id === cid);
+          openPspPayModal({
+            reference: cObj ? cObj.contract_number : cid,
+            contractId: cid,
+            suggestedAmount: defaultAmt,
+            cards: cab.payment_cards || [],
+            allowEarly: true,
+            onSuccess: load,
+          });
         });
       });
+      panel.querySelectorAll("[data-psp-pay-contract]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          openPspPayModal({
+            reference: btn.dataset.pspRef,
+            contractId: btn.dataset.pspPayContract,
+            suggestedAmount: Number(btn.dataset.pspAmt || 0),
+            cards: cab.payment_cards || [],
+            allowEarly: true,
+            onSuccess: load,
+          });
+        });
+      });
+      const cardsWrap = document.createElement("div");
+      cardsWrap.innerHTML = renderSavedCardsHtml(cab.payment_cards || []);
+      panel.appendChild(cardsWrap);
+      wireSavedCardsActions(cardsWrap, load);
     } else if (activeTab === "orders") {
       const ordData = await apiFetch("/api/v1/commerce/orders/");
       const orders = ordData.orders || [];
@@ -810,33 +855,63 @@ export async function renderCustomerCabinetView(container, initialTab = "nasiya"
         });
       });
     } else if (activeTab === "kyc") {
-      const prof = await apiFetch("/api/v1/accounts/profile/");
+      const [prof, cab] = await Promise.all([apiFetch("/api/v1/accounts/profile/"), apiFetch("/api/v1/finance/cabinet/")]);
       panel.innerHTML = `
-        <h2 class="mb-3">Profil va MyID / PINFL Verifikatsiya (Sandbox)</h2>
+        <h2 class="mb-3">INN / PINFL + KATM Kredit Tarixi + MIB Qarzdorlik &amp; 50% DSTI Skoring</h2>
         <div class="grid-2">
           <div class="card" style="background:var(--bg-subtle);">
-            <h4>Shaxsni tasdiqlash (28.4)</h4>
-            <p class="text-xs text-muted">Pasport va PINFL shifrlangan saqlanadi va dublikat akkauntlardan himoya qiladi (31.1).</p>
+            <h4>Shaxsni tasdiqlash va Tashqi Kredit Tekshiruvi (28.4)</h4>
+            <p class="text-xs text-muted">Pasport, PINFL va INN shifrlangan saqlanadi; KATM kredit tarixi, MIB qarzdorlik va 50% DSTI yuki tekshiriladi.</p>
             <form id="kyc-form">
-              <div class="form-group">
-                <label class="form-label" for="k-pinfl">14 xonali PINFL</label>
-                <input id="k-pinfl" class="form-control tabular" placeholder="31405940010099" maxlength="14" value="">
-                <span class="form-hint">Hozirgi (niqoblangan): ${esc(prof.user.masked_pinfl || "Kiritilmagan")}</span>
+              <div class="grid-2">
+                <div class="form-group">
+                  <label class="form-label" for="k-pinfl">14 xonali PINFL *</label>
+                  <input id="k-pinfl" class="form-control tabular" placeholder="31405940010099" maxlength="14" value="">
+                  <span class="form-hint">Hozirgi: ${esc(prof.user.masked_pinfl || "Kiritilmagan")}</span>
+                </div>
+                <div class="form-group">
+                  <label class="form-label" for="k-inn">INN / STIR (9 raqam, ixtiyoriy)</label>
+                  <input id="k-inn" class="form-control tabular" placeholder="305112849" maxlength="9" value="">
+                  <span class="form-hint">Hozirgi: ${esc(prof.user.masked_inn || "Kiritilmagan")}</span>
+                </div>
               </div>
-              <div class="form-group">
-                <label class="form-label" for="k-pass">Pasport / ID-karta</label>
-                <input id="k-pass" class="form-control" placeholder="AD9876543" value="">
-                <span class="form-hint">Hozirgi: ${esc(prof.user.masked_passport || "Kiritilmagan")}</span>
+              <div class="grid-2">
+                <div class="form-group">
+                  <label class="form-label" for="k-pass">Pasport / ID-karta</label>
+                  <input id="k-pass" class="form-control" placeholder="AD9876543" value="">
+                  <span class="form-hint">Hozirgi: ${esc(prof.user.masked_passport || "Kiritilmagan")}</span>
+                </div>
+                <div class="form-group">
+                  <label class="form-label" for="k-by">Tug‘ilgan yil (22–65 yosh)</label>
+                  <input id="k-by" type="number" class="form-control tabular" value="1994">
+                </div>
               </div>
-              <div class="form-group">
-                <label class="form-label" for="k-by">Tug‘ilgan yil (biznes siyosati 22–65 yosh)</label>
-                <input id="k-by" type="number" class="form-control" value="1994">
+              <div class="grid-2">
+                <div class="form-group">
+                  <label class="form-label" for="k-income">Oylik rasmiy daromad (so‘m)</label>
+                  <input id="k-income" type="number" class="form-control tabular" value="9500000" min="1500000" step="500000">
+                </div>
+                <div class="form-group">
+                  <label class="form-label" for="k-scen">Sandbox Tekshiruv Ssenariysi</label>
+                  <select id="k-scen" class="form-control">
+                    <option value="auto">Avto (PINFL bo‘yicha)</option>
+                    <option value="clean">✓ Toza tarix (qarz yo‘q)</option>
+                    <option value="moderate_credit">ℹ Boshqa bankda kredit bor (me’yorda)</option>
+                    <option value="high_debt">⚠ Boshqa kreditlar ko‘p (DSTI > 50%)</option>
+                    <option value="overdue_katm">⛔ KATM 45 kun kechikish bor</option>
+                    <option value="mib_debt">⛔ MIB ijro qarzdorligi aniqlangan</option>
+                  </select>
+                </div>
               </div>
-              <button type="submit" class="btn btn-primary">MyID Sandbox tasdiqlash va Limit olish</button>
+              <div class="mb-3">
+                <label class="flex-gap text-xs"><input type="checkbox" id="k-cons-id" checked> MyID / OneID va Soliq (INN/PINFL) tekshiruviga roziman</label>
+                <label class="flex-gap text-xs mt-1"><input type="checkbox" id="k-cons-cb" checked> KATM kredit byurosi va MIB ijro bazasidan so‘rashga roziman</label>
+              </div>
+              <button type="submit" class="btn btn-gold" style="width:100%;">⚡ KATM + MIB Tekshirish va Limit Hisoblash</button>
             </form>
           </div>
           <div class="card" style="background:var(--bg-subtle);">
-            <h4>Faol sessiyalar</h4>
+            <h4>Faol sessiyalar va Xavfsizlik</h4>
             ${prof.sessions
               .map(
                 (s) => `<div class="text-xs mb-2" style="padding-bottom:6px;border-bottom:1px solid var(--border-color);">
@@ -845,22 +920,45 @@ export async function renderCustomerCabinetView(container, initialTab = "nasiya"
                         </div>`
               )
               .join("")}
+            <div class="nasiya-callout mt-3 text-xs">
+              <strong>Nimalar tekshiriladi?</strong>
+              <ul style="margin:4px 0 0;padding-left:16px;">
+                <li>Boshqa banklar / nasiya do‘konlardagi faol kreditlar va oylik to‘lovlar</li>
+                <li>MIB (Majburiy Ijro Byurosi) qarzdorligi va taqiqlar</li>
+                <li>Markaziy Bank <strong>DSTI ≤ 50%</strong> qarz yuki chegarasi</li>
+              </ul>
+            </div>
           </div>
         </div>
+        <div id="kyc-report-mount">${renderKatmMibDstiReportHtml(cab.latest_scoring_report)}</div>
       `;
       document.getElementById("kyc-form").addEventListener("submit", async (e) => {
         e.preventDefault();
         try {
+          if (document.getElementById("k-cons-id").checked || document.getElementById("k-cons-cb").checked) {
+            await apiFetch("/api/v1/finance/consents/", {
+              method: "POST",
+              body: JSON.stringify({
+                purposes: {
+                  IDENTITY: document.getElementById("k-cons-id").checked,
+                  CREDIT_BUREAU: document.getElementById("k-cons-cb").checked,
+                },
+              }),
+            });
+          }
           const res = await apiFetch("/api/v1/finance/kyc/verify/", {
             method: "POST",
             body: JSON.stringify({
               pinfl: document.getElementById("k-pinfl").value,
+              inn: document.getElementById("k-inn").value,
               passport: document.getElementById("k-pass").value,
               birth_year: Number(document.getElementById("k-by").value),
+              monthly_income_uzs: Number(document.getElementById("k-income").value),
+              scenario: document.getElementById("k-scen").value,
               liveness_passed: true,
             }),
           });
-          showToast(res.message || `Tasdiqlandi! Yangi limit (${res.tier}): ${fmtUzs(res.available_limit_uzs)}`, "success");
+          showToast(res.message || `Qaror: ${res.decision}`, res.decision === "DECLINE" ? "error" : "success");
           load();
         } catch (err) {
           showToast(err.message, "error");
