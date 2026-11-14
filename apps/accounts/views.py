@@ -77,7 +77,7 @@ class RequestOtpView(APIView):
     permission_classes = [permissions.AllowAny]
 
     def post(self, request):
-        target = (request.data.get("target") or "").strip()
+        target = _normalize_uz_phone(request.data.get("target") or "")
         purpose = (request.data.get("purpose") or "LOGIN").strip()
         if not target:
             return Response({"detail": "Telefon raqami yoki email kiriting."}, status=status.HTTP_400_BAD_REQUEST)
@@ -115,11 +115,65 @@ class RequestOtpView(APIView):
         )
 
 
+def _normalize_uz_phone(raw: str) -> str:
+    digits = "".join(ch for ch in (raw or "") if ch.isdigit())
+    if len(digits) == 9:
+        digits = "998" + digits
+    elif len(digits) == 10 and digits.startswith("8"):
+        digits = "998" + digits[1:]
+    if len(digits) == 12 and digits.startswith("998"):
+        return f"+{digits}"
+    return (raw or "").strip()
+
+
+def _mask_person_name(full_name: str) -> str:
+    parts = [p for p in (full_name or "").strip().split() if p]
+    if not parts:
+        return "Foydalanuvchi"
+    return " ".join(p[0] + "*" * max(2, min(5, len(p) - 1)) for p in parts)
+
+
+class PhoneLookupView(APIView):
+    """Privacy-safe instant phone lookup to identify returning/new customers as they type."""
+
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        normalized = _normalize_uz_phone(request.data.get("phone") or "")
+        digits = "".join(ch for ch in normalized if ch.isdigit())
+        if len(digits) < 9:
+            return Response({"detail": "Kamida 9 xonali telefon raqamini kiriting."}, status=status.HTTP_400_BAD_REQUEST)
+
+        user = User.objects.filter(phone=normalized, is_active=True).first()
+        if not user:
+            return Response(
+                {
+                    "exists": False,
+                    "normalized_phone": normalized,
+                    "masked_name": None,
+                    "role_label": "Yangi mijoz",
+                    "message": "Yangi raqam — OTP kod bilan 10 soniyada profilingiz ochiladi.",
+                }
+            )
+        return Response(
+            {
+                "exists": True,
+                "normalized_phone": user.phone,
+                "masked_name": _mask_person_name(user.full_name),
+                "role": user.role,
+                "role_label": user.get_role_display(),
+                "kyc_status": user.kyc_status,
+                "is_phone_verified": user.is_phone_verified,
+                "message": "Siz tizimdan aniqlandingiz! OTP kod orqali profilni tasdiqlang.",
+            }
+        )
+
+
 class LoginView(APIView):
     permission_classes = [permissions.AllowAny]
 
     def post(self, request):
-        phone = (request.data.get("phone") or "").strip()
+        phone = _normalize_uz_phone(request.data.get("phone") or "")
         password = request.data.get("password") or ""
         otp_code = (request.data.get("otp_code") or "").strip()
         challenge_id = request.data.get("challenge_id")
@@ -141,7 +195,13 @@ class LoginView(APIView):
             challenge.save(update_fields=["verified_at"])
             user = User.objects.filter(phone=phone).first()
             if not user:
-                user = User.objects.create_user(phone=phone, full_name=f"Mijoz {phone[-4:]}", role=UserRole.CUSTOMER, is_phone_verified=True)
+                typed_name = (request.data.get("full_name") or "").strip()[:120]
+                user = User.objects.create_user(
+                    phone=phone,
+                    full_name=typed_name or f"Mijoz {phone[-4:]}",
+                    role=UserRole.CUSTOMER,
+                    is_phone_verified=True,
+                )
                 Profile.objects.get_or_create(user=user)
 
         if not user or not user.is_active:

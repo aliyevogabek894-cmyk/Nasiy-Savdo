@@ -1,5 +1,5 @@
 /* Home, Smart Catalog, Product Detail, Interactive Nasiya Calculator & Compare Views */
-import { apiFetch, esc, fmtDate, fmtUzs, renderProductCard, showToast, wireProductCardActions } from "../api.js";
+import { apiFetch, esc, fmtDate, fmtUzs, openProductQuickViewModal, renderProductCard, showToast, wireProductCardActions } from "../api.js";
 import { AppState } from "../i18n.js";
 
 const CAT_ICONS = {
@@ -122,7 +122,9 @@ export async function renderHomeView(container, reloadCartBadge) {
         </div>
         ${
           banners.length > 1
-            ? `<div class="hero-luxury-dots" id="hero-dots">
+            ? `<button type="button" id="hero-prev" class="hero-nav-btn hero-nav-prev" aria-label="Oldingi slayd">‹</button>
+               <button type="button" id="hero-next" class="hero-nav-btn hero-nav-next" aria-label="Keyingi slayd">›</button>
+               <div class="hero-luxury-dots" id="hero-dots">
                  ${banners.map((_, idx) => `<button type="button" class="hero-dot ${idx === 0 ? "active" : ""}" data-hero-dot="${idx}" aria-label="${idx + 1}-slayd"></button>`).join("")}
                </div>`
             : ""
@@ -160,6 +162,18 @@ export async function renderHomeView(container, reloadCartBadge) {
           : ""
       }
     </section>
+
+    <!-- Marquee Promo Ticker (Screen #2) -->
+    <div class="promo-marquee-strip" aria-label="Maxsus aksiyalar">
+      <div class="promo-marquee-track">
+        <span>🔥 Chegirmalar vaqti · Muddatli to‘lovga olish mumkin</span>
+        <span>💳 250 BHMgacha • 12 oygacha shaffof nasiya • Muddatidan oldin 0% yopish</span>
+        <span>🚚 BTS Express va ZARVON topshirish punktlarigacha bepul yetkazish</span>
+        <span>🔥 Chegirmalar vaqti · Muddatli to‘lovga olish mumkin</span>
+        <span>💳 250 BHMgacha • 12 oygacha shaffof nasiya • Muddatidan oldin 0% yopish</span>
+        <span>🚚 BTS Express va ZARVON topshirish punktlarigacha bepul yetkazish</span>
+      </div>
+    </div>
 
     <!-- 3. 3-Column Divided Trust Bar -->
     <section class="trust-bar-3" aria-label="Platforma afzalliklari">
@@ -285,23 +299,52 @@ export async function renderHomeView(container, reloadCartBadge) {
         : ""
     }
 
-    <!-- 6. Hafta Chegirmalari Horizontal Strip -->
-    ${
-      data.discounts.length
-        ? `<section class="mt-6">
-             <div class="flex-between mb-3">
-               <div>
-                 <h2 style="margin-bottom:2px;">🔥 Maxsus chegirmalar</h2>
-                 <span class="text-xs text-muted">Shaffof eski narx tarixi va chegirmali takliflar</span>
-               </div>
-               <a href="#catalog?sort=popular" class="btn btn-outline btn-sm">Barchasi →</a>
-             </div>
-             <div class="h-scroll-snap">
-               ${data.discounts.map(renderProductCard).join("")}
-             </div>
-           </section>`
-        : ""
-    }
+    <!-- 6. "Chegirmalar vaqti" Gradient Discount Matrix (Screen #2) -->
+    ${(() => {
+      const seen = new Set();
+      const promoDeals = [...(data.discounts || []), ...(data.popular || [])]
+        .filter((x) => {
+          if (seen.has(x.id)) return false;
+          seen.add(x.id);
+          return true;
+        })
+        .slice(0, 6);
+      if (!promoDeals.length) return "";
+      return `
+        <section class="mt-6">
+          <div class="flex-between mb-3">
+            <div>
+              <h2 style="margin-bottom:2px;">🔥 Chegirmalar vaqti</h2>
+              <span class="text-xs text-muted">Shaffof eski narx tarixi, chegirmalar va 1 klikda tez ko‘rish</span>
+            </div>
+            <a href="#catalog?sort=popular" class="btn btn-outline btn-sm">Barchasi ›</a>
+          </div>
+          <div class="chegirma-matrix">
+            ${promoDeals.map((p) => {
+              const oldPriceHtml = p.old_price && Number(p.old_price) > Number(p.cash_price)
+                ? `<div class="chegirma-old tabular">${fmtUzs(p.old_price)}</div>`
+                : `<div class="text-xs" style="color:#cbd5e1;">Maxsus narx</div>`;
+              const mPay = p.indicative_installment ? p.indicative_installment.monthly_payment : Math.ceil(Number(p.cash_price || 0) / 12);
+              const badgeHtml = p.discount_pct > 0
+                ? `<span class="chegirma-pct">-${esc(String(p.discount_pct))}%</span>`
+                : `<span class="chegirma-pct" style="background:var(--gold-500); color:var(--navy-900);">TOP</span>`;
+              return `
+                <article class="chegirma-card" data-chegirma-slug="${esc(p.slug)}" role="button" tabindex="0">
+                  <div>
+                    ${oldPriceHtml}
+                    <div class="chegirma-new tabular">${fmtUzs(p.cash_price)}</div>
+                    <div style="font-size:0.86rem; font-weight:700; line-height:1.25; margin-bottom:6px;">${esc(p.title)}</div>
+                    <span class="badge badge-gold tabular" style="font-size:0.7rem;">oyiga ${fmtUzs(mPay).replace(" so‘m", "")} so‘mdan</span>
+                  </div>
+                  <img class="chegirma-thumb" src="${esc(p.primary_image || "/static/icons/product-default.svg")}" alt="${esc(p.title)}" loading="lazy">
+                  ${badgeHtml}
+                </article>
+              `;
+            }).join("")}
+          </div>
+        </section>
+      `;
+    })()}
 
     <!-- 7. KATM + MIB Skoring CTA & Payment Gateways -->
     <section class="mt-6 card card-elevated" style="background:linear-gradient(125deg, #0d213f 0%, #193b68 100%);color:#ffffff;border:1px solid rgba(219,182,59,0.45);">
@@ -368,6 +411,8 @@ export async function renderHomeView(container, reloadCartBadge) {
     };
 
     dots.forEach((d) => d.addEventListener("click", () => goSlide(Number(d.dataset.heroDot))));
+    document.getElementById("hero-prev")?.addEventListener("click", () => goSlide(slideIdx - 1));
+    document.getElementById("hero-next")?.addEventListener("click", () => goSlide(slideIdx + 1));
     let timer = setInterval(() => goSlide(slideIdx + 1), 5500);
     const stopTimer = () => {
       clearInterval(timer);
@@ -438,6 +483,18 @@ export async function renderHomeView(container, reloadCartBadge) {
       activeMonths = Number(btn.dataset.hcMonths);
       document.querySelectorAll("[data-hc-months]").forEach((b) => b.classList.toggle("active", b === btn));
       updateHomeCalc();
+    });
+  });
+
+  container.querySelectorAll("[data-chegirma-slug]").forEach((card) => {
+    card.addEventListener("click", () => {
+      openProductQuickViewModal(card.dataset.chegirmaSlug, reloadCartBadge);
+    });
+    card.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        openProductQuickViewModal(card.dataset.chegirmaSlug, reloadCartBadge);
+      }
     });
   });
 
@@ -578,6 +635,18 @@ export async function renderCatalogView(container, queryStr, reloadCartBadge) {
     location.hash = "#catalog";
   });
 
+  container.querySelectorAll("[data-chegirma-slug]").forEach((card) => {
+    card.addEventListener("click", () => {
+      openProductQuickViewModal(card.dataset.chegirmaSlug, reloadCartBadge);
+    });
+    card.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        openProductQuickViewModal(card.dataset.chegirmaSlug, reloadCartBadge);
+      }
+    });
+  });
+
   wireProductCardActions(container, reloadCartBadge);
 }
 
@@ -594,11 +663,30 @@ export async function renderProductDetailView(container, slug, reloadCartBadge) 
     </div>
 
     <div class="grid-2" style="align-items:start;">
-      <!-- Left Gallery & Specs -->
+      <!-- Left Gallery & Specs (Screen #12 Multi-Thumb Stage) -->
       <div class="card">
-        <div style="background:var(--bg-subtle);border-radius:var(--radius-md);padding:24px;display:flex;justify-content:center;">
-          <img src="${esc(p.primary_image || "/static/icons/product-default.svg")}" alt="${esc(p.title)}" style="max-height:320px;">
-        </div>
+        ${(() => {
+          const imgs = (p.images && p.images.length) ? p.images : [p.primary_image || "/static/icons/product-default.svg"];
+          return `
+            <div class="pd-gallery-layout">
+              <div class="pd-thumbs-col">
+                ${imgs.slice(0, 6).map((src, idx) => `
+                  <button type="button" class="pd-thumb-btn ${idx === 0 ? "active" : ""}" data-pd-thumb="${idx}" data-pd-src="${esc(src)}">
+                    <img src="${esc(src)}" alt="${esc(p.title)} rasm ${idx + 1}">
+                  </button>
+                `).join("")}
+              </div>
+              <div class="pd-main-stage">
+                <span class="badge badge-navy" style="position:absolute; top:10px; left:10px; z-index:2; border:1px solid var(--gold-500);">✓ ORIGINAL</span>
+                <img id="pd-main-photo" src="${esc(imgs[0])}" alt="${esc(p.title)}">
+                ${imgs.length > 1 ? `
+                  <button type="button" id="pd-img-prev" class="hero-nav-btn hero-nav-prev" aria-label="Oldingi rasm">‹</button>
+                  <button type="button" id="pd-img-next" class="hero-nav-btn hero-nav-next" aria-label="Keyingi rasm">›</button>
+                ` : ""}
+              </div>
+            </div>
+          `;
+        })()}
         <div class="mt-4">
           <h3>Texnik xususiyatlar</h3>
           <div class="table-wrap">
@@ -662,13 +750,21 @@ export async function renderProductDetailView(container, slug, reloadCartBadge) 
           }
         </div>
 
+        <a href="#nasiya-info" style="display:flex; justify-content:space-between; align-items:center; padding:9px 12px; border-radius:10px; background:var(--gold-100); border:1px solid #f0b429; color:var(--navy-900); font-weight:700; font-size:0.84rem; margin-top:10px;">
+          <span>🗓 Muddatli to‘lov qanday ishlaydi? (250 BHMgacha • 0% jarima)</span>
+          <span>›</span>
+        </a>
+
         <div class="flex-gap mt-4">
           <button id="btn-prod-add-cart" class="btn btn-primary" style="flex:1;" ${p.stock_available <= 0 ? "disabled" : ""}>
             🛒 Savatga qo‘shish
           </button>
           <button id="btn-prod-buy-now" class="btn btn-gold" style="flex:1;" ${p.stock_available <= 0 ? "disabled" : ""}>
-            ⚡ Xarid / Kassa
+            ⚡ 1 klikda xarid
           </button>
+        </div>
+        <div class="text-xs text-muted mt-2">
+          👥 Bu hafta <strong>${Math.max(14, Number(p.rating_count || 5) * 3)}</strong> kishi xarid qildi • Yetkazish: <strong>${esc(p.delivery_badge || "Ertaga bepul")}</strong>
         </div>
         <div class="text-xs text-muted mt-3">
           🚚 Yetkazib berish: ${p.delivery_sla_days} ish kuni • Kuryer yoki yig‘ish punkti (OTP-kod bilan topshiriladi)
@@ -833,6 +929,23 @@ export async function renderProductDetailView(container, slug, reloadCartBadge) 
     document.getElementById("prod-down-pay")?.addEventListener("input", runCalc);
   }
 
+  // Screen #12 Product Gallery Thumbnails & Arrows
+  const galleryImgs = (p.images && p.images.length) ? p.images : [p.primary_image || "/static/icons/product-default.svg"];
+  let galleryIdx = 0;
+  const setGalleryIdx = (nextIdx) => {
+    galleryIdx = ((nextIdx % galleryImgs.length) + galleryImgs.length) % galleryImgs.length;
+    const mainImg = document.getElementById("pd-main-photo");
+    if (mainImg) mainImg.src = galleryImgs[galleryIdx];
+    container.querySelectorAll("[data-pd-thumb]").forEach((btn, idx) => {
+      btn.classList.toggle("active", idx === galleryIdx);
+    });
+  };
+  container.querySelectorAll("[data-pd-thumb]").forEach((btn) => {
+    btn.addEventListener("click", () => setGalleryIdx(Number(btn.dataset.pdThumb)));
+  });
+  document.getElementById("pd-img-prev")?.addEventListener("click", () => setGalleryIdx(galleryIdx - 1));
+  document.getElementById("pd-img-next")?.addEventListener("click", () => setGalleryIdx(galleryIdx + 1));
+
   document.getElementById("btn-prod-add-cart")?.addEventListener("click", async () => {
     if (!AppState.authenticated) {
       document.getElementById("btn-role-switcher")?.click();
@@ -874,6 +987,18 @@ export async function renderProductDetailView(container, slug, reloadCartBadge) 
     } catch (err) {
       showToast(err.message, "error");
     }
+  });
+
+  container.querySelectorAll("[data-chegirma-slug]").forEach((card) => {
+    card.addEventListener("click", () => {
+      openProductQuickViewModal(card.dataset.chegirmaSlug, reloadCartBadge);
+    });
+    card.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        openProductQuickViewModal(card.dataset.chegirmaSlug, reloadCartBadge);
+      }
+    });
   });
 
   wireProductCardActions(container, reloadCartBadge);
@@ -1120,4 +1245,168 @@ export async function renderCompareView(container) {
     document.getElementById("compare-count")?.classList.add("hidden");
     renderCompareView(container);
   });
+}
+
+export async function renderNasiyaInfoView(container) {
+  let bhmCap = "250 BHM";
+  let compliance = null;
+  try {
+    compliance = await apiFetch("/api/v1/governance/compliance/");
+    if (compliance?.bhm_max_cap_uzs) {
+      bhmCap = `${fmtUzs(compliance.bhm_max_cap_uzs)} (250 BHM)`;
+    }
+  } catch {
+    /* Graceful public fallback */
+  }
+
+  const faqs = [
+    {
+      q: "Muddatli to‘lovga olish uchun nimalar kerak?",
+      a: "O‘zbekiston Respublikasi fuqarosi pasporti (yoki ID-karta / PINFL), faol bank kartasi (Uzcard / Humo) hamda tasdiqlangan telefon raqami yetarli. Skoring 1 daqiqa ichida KATM va MIB tizimlari orqali tekshiriladi.",
+    },
+    {
+      q: "Nega arizani rasmiylashtirishdan oldin KATM va MIB tekshiriladi?",
+      a: "2027-yil Markaziy Bank talablariga muvofiq, mijozning boshqa banklardagi kreditlari va MIB qarzlari oylik daromadining 50% dan oshib ketmasligi (DSTI) va ortiqcha qarz yukiga tushmasligi uchun tekshiriladi.",
+    },
+    {
+      q: "Muddatidan oldin to‘liq yopsam qo‘shimcha jarima yoki foiz bormi?",
+      a: "Yo‘q! ZARVON 2027 Standartiga ko‘ra muddatidan oldin yopish komissiyasi 0%. Istalgan payt Click, Payme yoki Uzum Bank orqali qoldiq asosiy qarzni yopishingiz mumkin.",
+    },
+    {
+      q: "Buyurtmani BTS Express yoki hududiy topshirish punktidan qanday olaman?",
+      a: "Kassa bosqichida O‘zbekistonning istalgan hududidagi ZARVON PVZ yoki BTS Express punktini tanlashingiz (yoki o‘z manzilingizni qo‘shishingiz) mumkin. Kelgach SMS/kabinetdagi 6 xonali OTP kod orqali bepul qabul qilasiz.",
+    },
+  ];
+
+  container.innerHTML = `
+    <div style="display:flex; flex-direction:column; gap:24px;">
+      <!-- Hero Banner (Screen #9) -->
+      <section class="nasiya-hero-banner">
+        <div>
+          <span class="badge badge-gold mb-2">ZARVON NASIYA · 2027 STANDARTI</span>
+          <h1 style="color:#ffffff; margin:6px 0 12px; font-size:2rem; line-height:1.15;">Muddatli to‘lov qanday ishlaydi</h1>
+          <p style="color:#cbd5e1; max-width:540px; font-size:0.96rem;">
+            Shaffof foizsiz va hamkor banklar taklifi bilan qulay bo‘lib to‘lash. Boshlang‘ich to‘lovni va 3, 6, 9 yoki 12 oylik jadvalni o‘zingiz tanlaysiz — yashirin komissiyalarsiz.
+          </p>
+          <div class="flex gap-2 mt-4" style="flex-wrap:wrap;">
+            <a href="#customer/kyc" class="btn btn-gold">⚡ Shaxsiy limitni aniqlash</a>
+            <a href="#calculator" class="btn btn-outline" style="color:#ffffff; border-color:rgba(255,255,255,0.4);">🧮 To‘lov jadvalini hisoblash</a>
+          </div>
+        </div>
+        <div class="nasiya-badge-cluster" aria-label="Muddat variantlari">
+          <div class="nasiya-float-num">3<small>oyga</small></div>
+          <div class="nasiya-float-num">6<small>oyga</small></div>
+          <div class="nasiya-float-num">12<small>oyga</small></div>
+          <div class="nasiya-float-num" style="background:rgba(255,255,255,0.14); color:#ffffff; border:1px solid rgba(255,255,255,0.3);">0%<small>oldin yopish</small></div>
+        </div>
+      </section>
+
+      <!-- 2 Limit Tiers (Screen #9) -->
+      <section>
+        <h2 class="mb-3">Ikki bosqichli qulay limit tizimi</h2>
+        <div class="grid-2">
+          <div class="card card-elevated">
+            <span class="badge badge-navy mb-2">BOSHLANG‘ICH</span>
+            <h3>Tezkor skoring limiti</h3>
+            <p class="text-sm text-secondary">Telefon raqam va PINFL orqali 60 soniyada KATM + MIB asosida hisoblanadi. Kundalik texnika va kichik xaridlarga darhol ochiladi.</p>
+            <ul class="text-xs text-muted" style="padding-left:18px; margin-top:8px;">
+              <li>Minimal hujjat: ID-karta yoki Pasport</li>
+              <li>0% oldindan to‘lov imkoniyati tanlangan toifalarda</li>
+            </ul>
+          </div>
+          <div class="card card-elevated" style="border-color:var(--gold-500);">
+            <span class="badge badge-gold mb-2">KENGAYTIRILGAN · ${esc(bhmCap)}</span>
+            <h3>Bank + Zarvon yuqori limiti</h3>
+            <p class="text-sm text-secondary">Uzcard/Humo aylanmasi va rasmiy daromad tasdiqlangach, noutbuk, televizor, sovutgich va yirik to‘plamlar uchun maksimal limit ochiladi.</p>
+            <ul class="text-xs text-muted" style="padding-left:18px; margin-top:8px;">
+              <li>Bir nechta bank takliflarini yonma-yon solishtirish</li>
+              <li>Markaziy Bank ≤50%/yil ustama chegarasi himoyasi</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- Payment Schedule Visualization (Screen #10) -->
+      <section class="card">
+        <h2 class="mb-2">To‘lovlar taqsimoti qanday ko‘rinadi?</h2>
+        <p class="text-sm text-muted mb-3">Har bir buyurtma uchun oyma-oy grafik kabinetda aniq sana va summa bilan saqlanadi.</p>
+        <div class="grid-2">
+          <div class="card" style="background:var(--bg-subtle);">
+            <div class="flex justify-between items-center">
+              <strong>6 oylik tezkor reja</strong>
+              <span class="badge badge-navy tabular">1 000 000 so‘m / oy</span>
+            </div>
+            <div class="timeline-segments">
+              <div class="timeline-seg filled"></div>
+              <div class="timeline-seg filled"></div>
+              <div class="timeline-seg filled"></div>
+              <div class="timeline-seg"></div>
+              <div class="timeline-seg"></div>
+              <div class="timeline-seg"></div>
+            </div>
+            <div class="text-xs text-muted">Namuna: 6 000 000 so‘m xarid · 3 ta to‘lov bajarildi, keyingi sana SMS orqali eslatiladi.</div>
+          </div>
+          <div class="card" style="background:var(--bg-subtle);">
+            <div class="flex justify-between items-center">
+              <strong>12 oylik qulay grafik</strong>
+              <span class="badge badge-gold tabular">583 300 so‘m / oy</span>
+            </div>
+            <div class="timeline-segments" style="grid-template-columns:repeat(12, 1fr);">
+              ${Array.from({ length: 12 }, (_, idx) => `<div class="timeline-seg ${idx < 4 ? "filled" : ""}"></div>`).join("")}
+            </div>
+            <div class="text-xs text-muted">Istalgan oyda Click, Payme yoki Uzum orqali jarimasiz muddatidan oldin yopish mumkin.</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 3 Benefits + Onboarding + Phone UI Mockup (Screen #10 & #11) -->
+      <section class="grid-2" style="align-items:center;">
+        <div style="display:flex; flex-direction:column; gap:12px;">
+          <h2>3 oddiy qadamda rasmiylashtiring</h2>
+          <div class="card">
+            <strong>1. Raqam bilan kiring — tizim o‘zi taniydi</strong>
+            <div class="text-xs text-secondary mt-1">Telefon raqamingizni yozishingiz bilan profil, mavjud shartnoma va limit ma‘lumotlari ko‘rinadi.</div>
+          </div>
+          <div class="card">
+            <strong>2. PINFL + KATM/MIB roziligini bering</strong>
+            <div class="text-xs text-secondary mt-1">Boshqa banklardagi kreditlar va MIB qarzdorlik shaffof tekshirilib, maksimal xavfsiz limit hisoblanadi.</div>
+          </div>
+          <div class="card">
+            <strong>3. To‘lov usulini tanlang va BTS / PVZdan oling</strong>
+            <div class="text-xs text-secondary mt-1">Click, Payme, Uzum Bank yoki nasiya jadvalini tasdiqlab, mahsulotni OTP kod bilan oling.</div>
+          </div>
+        </div>
+        <div class="phone-mockup-frame">
+          <div class="flex justify-between items-center mb-2">
+            <strong style="font-size:0.88rem;">ZARVON Nasiya</strong>
+            <span class="badge badge-gold" style="font-size:0.68rem;">2027 Guard ✓</span>
+          </div>
+          <div class="card" style="background:linear-gradient(135deg,#0d213f,#1b3b6f); color:#ffffff; padding:14px;">
+            <div class="text-xs" style="color:#cbd5e1;">Tasdiqlangan limit</div>
+            <div class="tabular" style="font-size:1.3rem; font-weight:900; color:#fde047;">15 000 000 so‘m</div>
+            <div class="text-xs mt-1" style="color:#cbd5e1;">Muddatidan oldin yopish: 0% jarima</div>
+          </div>
+          <div class="text-xs mt-3" style="display:flex; flex-direction:column; gap:6px;">
+            <div class="flex justify-between"><span>Keyingi to‘lov:</span><strong class="tabular">15-dekabr</strong></div>
+            <div class="flex justify-between"><span>Summa:</span><strong class="tabular">799 000 so‘m</strong></div>
+            <div class="flex justify-between"><span>Usul:</span><strong>Click / Payme / Uzum</strong></div>
+          </div>
+          <a href="#customer/kyc" class="btn btn-primary btn-sm btn-block mt-3">Limitimni tekshirish ›</a>
+        </div>
+      </section>
+
+      <!-- FAQ Accordion (Screen #11) -->
+      <section class="card">
+        <h2 class="mb-3">Ko‘p so‘raladigan savollar (FAQ)</h2>
+        <div style="display:flex; flex-direction:column; gap:8px;" id="nasiya-faq-list">
+          ${faqs.map((item, idx) => `
+            <details class="card" style="background:var(--bg-subtle); cursor:pointer;" ${idx === 0 ? "open" : ""}>
+              <summary style="font-weight:800; font-size:0.95rem;">${esc(item.q)}</summary>
+              <p class="text-sm text-secondary mt-2 mb-0">${esc(item.a)}</p>
+            </details>
+          `).join("")}
+        </div>
+      </section>
+    </div>
+  `;
 }

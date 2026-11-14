@@ -735,3 +735,65 @@ class UzumPspAndMarketplaceFlowTests(_DjangoTestCase):
         finally:
             if saved_disk_path.exists():
                 saved_disk_path.unlink()
+
+    def test_phone_lookup_masked_identity_normalization_and_validation(self):
+        self.client.force_authenticate(user=None)
+
+        found = self.client.post("/api/v1/auth/phone-lookup/", {"phone": "90 111 00 01"}, format="json")
+        self.assertEqual(found.status_code, 200)
+        self.assertTrue(found.data["exists"])
+        self.assertEqual(found.data["normalized_phone"], "+998901110001")
+        self.assertIn("*", found.data["masked_name"])
+        self.assertNotEqual(found.data["masked_name"], self.customer.full_name)
+
+        missing = self.client.post("/api/v1/auth/phone-lookup/", {"phone": "+998 99 888 77 66"}, format="json")
+        self.assertEqual(missing.status_code, 200)
+        self.assertFalse(missing.data["exists"])
+        self.assertEqual(missing.data["normalized_phone"], "+998998887766")
+        self.assertIsNone(missing.data["masked_name"])
+
+        invalid = self.client.post("/api/v1/auth/phone-lookup/", {"phone": "123"}, format="json")
+        self.assertEqual(invalid.status_code, 400)
+
+    def test_delivery_points_bts_search_and_custom_create(self):
+        # Seeded nationwide BTS points searchable publicly
+        bts_list = self.client.get("/api/v1/commerce/delivery-points/?q=BTS")
+        self.assertEqual(bts_list.status_code, 200)
+        self.assertGreaterEqual(len(bts_list.data["results"]), 5)
+        self.assertTrue(any("BTS" in pt["name"] for pt in bts_list.data["results"]))
+
+        furqat = self.client.get("/api/v1/commerce/delivery-points/?q=Furqat")
+        self.assertEqual(furqat.status_code, 200)
+        self.assertGreaterEqual(len(furqat.data["results"]), 1)
+
+        # Anonymous user cannot create a custom delivery point
+        self.client.force_authenticate(user=None)
+        anon_post = self.client.post(
+            "/api/v1/commerce/delivery-points/",
+            {"name": "BTS Custom", "region": "Samarqand", "address": "Registon 1"},
+            format="json",
+        )
+        self.assertIn(anon_post.status_code, (401, 403))
+
+        # Authenticated user can add a custom BTS / PVZ pickup location
+        self.client.force_authenticate(user=self.customer)
+        created = self.client.post(
+            "/api/v1/commerce/delivery-points/",
+            {"name": "BTS Express — Test Hub", "region": "Farg‘ona", "address": "Navoiy ko‘chasi 12"},
+            format="json",
+        )
+        self.assertEqual(created.status_code, 201)
+        self.assertTrue(created.data["ok"])
+        self.assertEqual(created.data["point"]["name"], "BTS Express — Test Hub")
+
+        search_created = self.client.get("/api/v1/commerce/delivery-points/?q=Test Hub")
+        self.assertEqual(search_created.status_code, 200)
+        self.assertEqual(len(search_created.data["results"]), 1)
+
+    def test_product_detail_returns_similar_products(self):
+        detail = self.client.get(f"/api/v1/catalog/products/{self.product.slug}/")
+        self.assertEqual(detail.status_code, 200)
+        sim = detail.data.get("similar_products", [])
+        self.assertGreaterEqual(len(sim), 1)
+        self.assertLessEqual(len(sim), 4)
+        self.assertTrue(all(str(x["id"]) != str(self.product.id) for x in sim))

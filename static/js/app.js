@@ -1,11 +1,21 @@
 /* ZARVON Main SPA Router, Auth/Demo Switcher, Smart Search Autocomplete, Theme & PWA */
-import { apiFetch, closeModal, esc, fmtUzs, openModal, showToast } from "./api.js";
+import {
+  apiFetch,
+  closeModal,
+  esc,
+  fmtUzs,
+  openDeliveryPointPickerModal,
+  openModal,
+  openProductQuickViewModal,
+  showToast,
+} from "./api.js";
 import { AppState, t } from "./i18n.js";
 import {
   renderCalculatorView,
   renderCatalogView,
   renderCompareView,
   renderHomeView,
+  renderNasiyaInfoView,
   renderProductDetailView,
 } from "./views/marketplace.js";
 import { renderCartView, renderCheckoutView, renderCustomerCabinetView } from "./views/checkout_customer.js";
@@ -117,12 +127,19 @@ function openAuthAndRoleModal() {
           <div class="grid-2">
             <div class="form-group">
               <label class="form-label" for="lg-phone">Telefon</label>
-              <input id="lg-phone" class="form-control" value="+998901110001">
+              <input id="lg-phone" class="form-control" value="+998901110001" placeholder="+998 90 123 45 67">
             </div>
             <div class="form-group">
               <label class="form-label" for="lg-pass">Parol (yoki OTP)</label>
               <input id="lg-pass" type="password" class="form-control" value="Zarvon2026!">
             </div>
+          </div>
+          <div id="lg-identity-box" class="text-xs mb-2" style="padding:7px 10px; border-radius:8px; background:var(--bg-surface); border:1px solid var(--border-color);">
+            Raqamingizni kiriting — tizim egasini avtomatik aniqlaydi.
+          </div>
+          <div id="lg-fullname-wrap" class="form-group hidden">
+            <label class="form-label" for="lg-fullname">Ism va familiyangiz (yangi mijoz uchun)</label>
+            <input id="lg-fullname" class="form-control" placeholder="Masalan: Sardorbek Alimov">
           </div>
           <div class="flex-gap">
             <button type="submit" class="btn btn-primary btn-sm">Parol bilan kirish</button>
@@ -152,6 +169,44 @@ function openAuthAndRoleModal() {
         showToast("Tizimdan chiqildi.");
         route();
       });
+
+      let lookupTimer = null;
+      const runPhoneLookup = async () => {
+        const phoneInput = document.getElementById("lg-phone");
+        const box = document.getElementById("lg-identity-box");
+        const nameWrap = document.getElementById("lg-fullname-wrap");
+        if (!phoneInput || !box) return;
+        const val = phoneInput.value.trim();
+        if (val.replace(/\D/g, "").length < 9) {
+          box.textContent = "Kamida 9 ta raqam kiriting (masalan: 90 111 00 01).";
+          box.style.borderColor = "var(--border-color)";
+          nameWrap?.classList.add("hidden");
+          return;
+        }
+        try {
+          const info = await apiFetch("/api/v1/auth/phone-lookup/", {
+            method: "POST",
+            body: JSON.stringify({ phone: val }),
+          });
+          if (info.exists) {
+            box.innerHTML = `<strong style="color:#15803d;">✓ ${esc(info.masked_name)}</strong> <span class="badge badge-navy">${esc(info.role_label)}</span> — raqam aniqlandi, parol yoki OTP bilan kiring.`;
+            box.style.borderColor = "#16a34a";
+            nameWrap?.classList.add("hidden");
+          } else {
+            box.innerHTML = `<strong style="color:#b45309;">✦ Yangi raqam (${esc(info.normalized_phone)})</strong> — OTP so‘rang va ismingizni kiriting.`;
+            box.style.borderColor = "#d97706";
+            nameWrap?.classList.remove("hidden");
+          }
+        } catch {
+          box.textContent = "Raqam formatini tekshiring: +998 XX XXX XX XX.";
+        }
+      };
+
+      document.getElementById("lg-phone")?.addEventListener("input", () => {
+        clearTimeout(lookupTimer);
+        lookupTimer = setTimeout(runPhoneLookup, 260);
+      });
+      runPhoneLookup();
 
       document.getElementById("modal-login-form").onsubmit = async (e) => {
         e.preventDefault();
@@ -188,13 +243,16 @@ function openAuthAndRoleModal() {
 
       document.getElementById("lg-otp-login").onclick = async () => {
         try {
+          const fullName = document.getElementById("lg-fullname")?.value.trim();
+          const body = {
+            phone: document.getElementById("lg-phone").value,
+            challenge_id: currentChallengeId,
+            otp_code: document.getElementById("lg-otp-code").value,
+          };
+          if (fullName) body.full_name = fullName;
           await apiFetch("/api/v1/auth/login/", {
             method: "POST",
-            body: JSON.stringify({
-              phone: document.getElementById("lg-phone").value,
-              challenge_id: currentChallengeId,
-              otp_code: document.getElementById("lg-otp-code").value,
-            }),
+            body: JSON.stringify(body),
           });
           await refreshAuth();
           closeModal();
@@ -246,6 +304,8 @@ async function route() {
       await renderProductDetailView(main, parts[1], refreshCartBadge);
     } else if (base === "calculator") {
       await renderCalculatorView(main);
+    } else if (base === "nasiya-info") {
+      await renderNasiyaInfoView(main);
     } else if (base === "compare") {
       await renderCompareView(main);
     } else if (base === "cart") {
@@ -283,41 +343,61 @@ function setupSmartSearch() {
   const box = document.getElementById("search-suggestions");
   let timer = null;
 
+  async function renderSearchPopover(val) {
+    try {
+      const endpoint = val.length >= 1
+        ? `/api/v1/catalog/products/?q=${encodeURIComponent(val)}`
+        : `/api/v1/catalog/products/?sort=popular`;
+      const res = await apiFetch(endpoint);
+      const items = (res.results || []).slice(0, 6);
+      if (!items.length) {
+        box.innerHTML = `<div class="suggestion-item text-muted">«${esc(val)}» bo‘yicha natija topilmadi</div>`;
+        box.classList.remove("hidden");
+        return;
+      }
+      box.innerHTML = `
+        <div class="flex items-center justify-between text-xs text-muted mb-1">
+          <strong>${val ? `«${esc(val)}» bo‘yicha topilgan mahsulotlar` : "🔥 Ommabop qidiruvlar"}</strong>
+          ${val ? `<a href="#catalog?q=${encodeURIComponent(val)}" id="search-view-all" style="color:var(--navy-700); font-weight:700;">Barchasini ko‘rish ›</a>` : ""}
+        </div>
+        <div class="search-rich-grid">
+          ${items.map((p) => {
+            const mPay = p.indicative_installment ? p.indicative_installment.monthly_payment : Math.ceil(Number(p.cash_price || 0) / 12);
+            return `
+              <div class="search-mini-card" data-sug-slug="${esc(p.slug)}">
+                <img src="${esc(p.primary_image || "/static/icons/product-default.svg")}" alt="${esc(p.title)}">
+                <div style="font-size:0.78rem; font-weight:700; line-height:1.25; overflow:hidden; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical;">${esc(p.title)}</div>
+                <div class="tabular" style="font-size:0.84rem; font-weight:900; color:var(--navy-900);">${fmtUzs(p.cash_price)}</div>
+                <span class="badge badge-gold tabular" style="font-size:0.68rem; width:fit-content;">oyiga ${fmtUzs(mPay).replace(" so‘m", "")} so‘m</span>
+              </div>
+            `;
+          }).join("")}
+        </div>
+      `;
+      box.querySelector("#search-view-all")?.addEventListener("click", () => {
+        box.classList.add("hidden");
+      });
+      box.querySelectorAll("[data-sug-slug]").forEach((el) => {
+        el.onclick = () => {
+          box.classList.add("hidden");
+          openProductQuickViewModal(el.dataset.sugSlug, refreshCartBadge);
+        };
+      });
+      box.classList.remove("hidden");
+    } catch {
+      box.classList.add("hidden");
+    }
+  }
+
+  input.addEventListener("focus", () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => renderSearchPopover(input.value.trim()), 80);
+  });
+
   input.addEventListener("input", () => {
     clearTimeout(timer);
     const val = input.value.trim();
-    if (val.length < 2) {
-      box.classList.add("hidden");
-      return;
-    }
-    timer = setTimeout(async () => {
-      try {
-        const res = await apiFetch(`/api/v1/catalog/products/?q=${encodeURIComponent(val)}`);
-        if (!res.results.length) {
-          box.innerHTML = `<div class="suggestion-item text-muted">Natija topilmadi</div>`;
-        } else {
-          box.innerHTML = res.results
-            .slice(0, 6)
-            .map(
-              (p) => `
-              <div class="suggestion-item" data-sug-slug="${esc(p.slug)}">
-                <span>${esc(p.title)}</span>
-                <strong class="tabular text-sm">${fmtUzs(p.cash_price)}</strong>
-              </div>`
-            )
-            .join("");
-          box.querySelectorAll("[data-sug-slug]").forEach((el) => {
-            el.onclick = () => {
-              box.classList.add("hidden");
-              location.hash = `#product/${el.dataset.sugSlug}`;
-            };
-          });
-        }
-        box.classList.remove("hidden");
-      } catch {
-        box.classList.add("hidden");
-      }
-    }, 200);
+    timer = setTimeout(() => renderSearchPopover(val), 180);
   });
 
   document.addEventListener("click", (e) => {
@@ -368,9 +448,57 @@ async function init() {
     langSel.addEventListener("change", () => applyLanguage(langSel.value));
   }
 
-  document.getElementById("btn-nav-catalog")?.addEventListener("click", () => {
-    location.hash = "#catalog";
+  let megaCatsCache = null;
+  const catBtn = document.getElementById("btn-nav-catalog");
+  const megaDrawer = document.getElementById("mega-catalog-drawer");
+  catBtn?.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    if (!megaDrawer) {
+      location.hash = "#catalog";
+      return;
+    }
+    const willOpen = megaDrawer.classList.contains("hidden");
+    megaDrawer.classList.toggle("hidden", !willOpen);
+    catBtn.setAttribute("aria-expanded", String(willOpen));
+    if (!willOpen) return;
+    if (!megaCatsCache) {
+      try {
+        const res = await apiFetch("/api/v1/catalog/categories/");
+        megaCatsCache = res.results || res || [];
+      } catch {
+        megaCatsCache = [];
+      }
+    }
+    megaDrawer.innerHTML = `
+      <div class="container">
+        <div class="flex items-center justify-between mb-2">
+          <strong>⊞ Barcha turkumlar</strong>
+          <div class="flex gap-2">
+            <a href="#catalog" class="btn btn-primary btn-xs" data-close-mega="1">Barcha mahsulotlar ›</a>
+            <a href="#nasiya-info" class="btn btn-gold btn-xs" data-close-mega="1">💳 Muddatli to‘lov qoidalari</a>
+          </div>
+        </div>
+        <div class="mega-cat-grid">
+          ${megaCatsCache.map((c) => `
+            <a href="#catalog?category=${esc(c.slug)}" class="mega-cat-card" data-close-mega="1">
+              <span style="font-size:1.35rem;">📦</span>
+              <div>
+                <div style="font-weight:800; font-size:0.88rem;">${esc(c.name)}</div>
+                <div class="text-xs text-muted">${c.is_real_estate ? "Naqd savdo" : "Nasiya va naqd"}</div>
+              </div>
+            </a>
+          `).join("")}
+        </div>
+      </div>
+    `;
+    megaDrawer.querySelectorAll("[data-close-mega]").forEach((el) => {
+      el.addEventListener("click", () => {
+        megaDrawer.classList.add("hidden");
+        catBtn.setAttribute("aria-expanded", "false");
+      });
+    });
   });
+
   document.getElementById("btn-role-switcher")?.addEventListener("click", openAuthAndRoleModal);
 
   // Offline / Online Banner
@@ -401,52 +529,59 @@ async function init() {
 init();
 
 
-/* --- ZARVON Pickup Point Selector & Tactile Shell Enhancements --- */
+/* --- ZARVON Pickup Point Selector, Mega-Catalog & Ribbon Yana Interactions --- */
 function setupUzumShellInteractions() {
   const labelEl = document.getElementById("header-dp-label");
-  if (labelEl && AppState.deliveryPoint?.region) {
-    labelEl.textContent = AppState.deliveryPoint.region;
+  if (labelEl && (AppState.deliveryPoint?.region || AppState.deliveryCity)) {
+    labelEl.textContent = AppState.deliveryPoint?.region || AppState.deliveryCity;
   }
 
-  const dpBtn = document.getElementById("btn-delivery-point");
-  if (dpBtn && !dpBtn.dataset.wired) {
-    dpBtn.dataset.wired = "1";
-    dpBtn.addEventListener("click", async () => {
-      try {
-        const res = await apiFetch("/api/v1/commerce/delivery-points/");
-        const list = res.results || [];
-        openModal(
-          "Yetkazib berish shahri va topshirish punkti (PVR)",
-          `
-            <p class="text-sm text-secondary mb-3">Tanlangan punkt kassada (Checkout) avtomatik taklif qilinadi.</p>
-            <div style="display:flex;flex-direction:column;gap:8px;">
-              ${list
-                .map(
-                  (d) => `
-                <button type="button" class="cat-drawer-item" data-pick-dp="${esc(d.id)}" data-dp-name="${esc(d.name)}" data-dp-reg="${esc(d.region)}">
-                  <div style="text-align:left;">
-                    <div class="fw-bold">📍 ${esc(d.name)}</div>
-                    <div class="text-xs text-muted">${esc(d.region)} • ${esc(d.address)} (${esc(d.working_hours)})</div>
-                  </div>
-                  <span class="badge ${AppState.deliveryPoint?.id === d.id ? "badge-gold" : "badge-navy"}">${AppState.deliveryPoint?.id === d.id ? "Tanlangan" : "Tanlash"}</span>
-                </button>`
-                )
-                .join("")}
-            </div>
-          `
-        );
-        document.querySelectorAll("[data-pick-dp]").forEach((b) => {
-          b.addEventListener("click", () => {
-            const chosen = { id: b.dataset.pickDp, name: b.dataset.dpName, region: b.dataset.dpReg };
-            AppState.deliveryPoint = chosen;
-            localStorage.setItem("zarvon_dp", JSON.stringify(chosen));
-            if (labelEl) labelEl.textContent = chosen.region;
-            closeModal();
-            showToast(`Topshirish punkti tanlandi: ${chosen.name}`, "success");
-          });
-        });
-      } catch (err) {
-        showToast(err.message, "error");
+  const openPvzModal = () => {
+    openDeliveryPointPickerModal((picked) => {
+      AppState.deliveryPoint = picked;
+      localStorage.setItem("zarvon_dp", JSON.stringify(picked));
+      if (labelEl) labelEl.textContent = picked.region;
+    });
+  };
+
+  ["btn-delivery-point", "btn-open-pvz-list"].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el && !el.dataset.wired) {
+      el.dataset.wired = "1";
+      el.addEventListener("click", openPvzModal);
+    }
+  });
+
+  const yanaBtn = document.getElementById("btn-yana-cats");
+  const yanaPanel = document.getElementById("yana-dropdown-panel");
+  if (yanaBtn && yanaPanel && !yanaBtn.dataset.wired) {
+    yanaBtn.dataset.wired = "1";
+    yanaBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const willOpen = yanaPanel.classList.contains("hidden");
+      yanaPanel.classList.toggle("hidden", !willOpen);
+      yanaBtn.setAttribute("aria-expanded", String(willOpen));
+    });
+    yanaPanel.querySelectorAll("a").forEach((a) => {
+      a.addEventListener("click", () => {
+        yanaPanel.classList.add("hidden");
+        yanaBtn.setAttribute("aria-expanded", "false");
+      });
+    });
+  }
+
+  if (!document.body.dataset.shellDocWired) {
+    document.body.dataset.shellDocWired = "1";
+    document.addEventListener("click", (e) => {
+      const megaDrawer = document.getElementById("mega-catalog-drawer");
+      const catBtn = document.getElementById("btn-nav-catalog");
+      if (megaDrawer && !megaDrawer.classList.contains("hidden") && !megaDrawer.contains(e.target) && !catBtn?.contains(e.target)) {
+        megaDrawer.classList.add("hidden");
+        catBtn?.setAttribute("aria-expanded", "false");
+      }
+      if (yanaPanel && !yanaPanel.classList.contains("hidden") && !yanaPanel.contains(e.target) && !yanaBtn?.contains(e.target)) {
+        yanaPanel.classList.add("hidden");
+        yanaBtn?.setAttribute("aria-expanded", "false");
       }
     });
   }

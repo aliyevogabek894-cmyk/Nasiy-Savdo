@@ -27,6 +27,30 @@
     </div>
   </div>
 
+  <!-- Top Utility Bar (Uzum Style City, PVZ/BTS, Seller, FAQ & Orders) -->
+  <div class="utility-topbar">
+    <div class="container utility-topbar-inner">
+      <div class="flex-gap">
+        <button type="button" id="btn-delivery-point" class="city-picker-btn" title="Topshirish punkti / BTS tanlash">
+          <span aria-hidden="true">📍</span>
+          <span id="header-dp-label">Toshkent</span>
+          <span aria-hidden="true">▾</span>
+        </button>
+        <button type="button" id="btn-open-pvz-list" class="utility-link">Topshirish punktlari (BTS &amp; PVZ)</button>
+      </div>
+      <div class="utility-right-links">
+        <a href="#seller-onboarding" class="utility-link highlight">Sotuvchi bo‘lish</a>
+        <a href="#nasiya-info" class="utility-link">Savol-javob</a>
+        <a href="#customer/orders" class="utility-link">Buyurtmalarim</a>
+        <select id="lang-switcher" class="select-compact utility-lang" aria-label="Tilni tanlash">
+          <option value="uz">🇺🇿 O‘zbekcha</option>
+          <option value="ru">🇷🇺 Русский</option>
+          <option value="en">🇬🇧 English</option>
+        </select>
+      </div>
+    </div>
+  </div>
+
   <!-- Main Sticky Dark-Navy Luxury Header -->
   <header class="site-header site-header-luxury" role="banner">
     <div class="container header-inner">
@@ -38,46 +62,32 @@
             <span class="brand-sub">FINTECH &amp; MARKETPLACE</span>
           </div>
         </a>
-        <button type="button" id="btn-delivery-point" class="city-picker-btn" title="Topshirish punktini tanlash">
-          <span aria-hidden="true">📍</span>
-          <span id="header-dp-label">Toshkent</span>
-          <span aria-hidden="true">▾</span>
+        <button id="btn-nav-catalog" type="button" class="hdr-catalog-btn hide-mobile" aria-expanded="false">
+          <span aria-hidden="true">⊞</span> <span data-i18n="nav_catalog">Katalog</span>
         </button>
       </div>
 
-      <!-- Pill White Smart Search Bar -->
+      <!-- Pill White Smart Search Bar (with Rich Card Popover) -->
       <form id="global-search-form" class="search-box" role="search">
         <input
           id="global-search-input"
           type="search"
           autocomplete="off"
-          placeholder="Telefon, noutbuk, televizor..."
+          placeholder="Mahsulotlar va turkumlarni izlash..."
           aria-label="Mahsulotlarni aqlli qidirish"
         >
         <button type="submit" class="search-submit" aria-label="Qidirish">Qidirish</button>
-        <div id="search-suggestions" class="search-suggestions hidden" role="listbox"></div>
+        <div id="search-suggestions" class="search-suggestions search-rich-dropdown hidden" role="listbox"></div>
       </form>
 
-      <!-- Desktop Direct Links + Utility Actions -->
-      <nav class="header-nav-links" aria-label="Asosiy havolalar">
-        <button id="btn-nav-catalog" type="button" class="hdr-nav-item" data-route="#catalog">
-          <span aria-hidden="true">⊞</span> <span data-i18n="nav_catalog">Katalog</span>
-        </button>
-        <a href="#calculator" class="hdr-nav-item" data-nav="calculator">🧮 Nasiya</a>
-        <a href="#seller" class="hdr-nav-item" data-nav="seller">🏪 Sotuvchilar</a>
-        <a href="#customer" class="hdr-nav-item" data-nav="customer">🎧 Yordam</a>
-      </nav>
-
       <div class="header-actions">
-        <button id="btn-role-switcher" class="hdr-pill-btn" title="Hisob va sandbox rol almashuvi">
-          <span id="current-role-badge">👤 Kirish / Rol</span>
+        <button id="btn-role-switcher" class="hdr-pill-btn" title="Raqam orqali aniqlash va rol almashuvi">
+          <span id="current-role-badge">👤 Kirish</span>
         </button>
 
-        <select id="lang-switcher" class="select-compact hide-mobile" aria-label="Tilni tanlash">
-          <option value="uz">UZ</option>
-          <option value="ru">RU</option>
-          <option value="en">EN</option>
-        </select>
+        <a href="#customer/wishlists" class="hdr-nav-item hide-mobile" title="Saralanganlar">
+          <span>♡</span> <span class="hide-sm">Saralangan</span>
+        </a>
 
         <button id="btn-theme-toggle" class="icon-btn" aria-label="Tungi va kunduzgi rejimni almashtirish" title="Light / Dark mode">
           <span id="theme-icon">🌙</span>
@@ -96,15 +106,43 @@
       </div>
     </div>
 
+    <!-- Floating Mega-Catalog Popover (Hidden until Katalog clicked) -->
+    <div id="mega-catalog-drawer" class="mega-catalog-drawer hidden" role="region" aria-label="Katalog menyusi"></div>
+
+    <!-- Sticky Sub-Header Quick Category & Campaign Ribbon (Screens #1, #3, #5) -->
+    <nav class="subcat-ribbon" aria-label="Tezkor toifalar va aksiyalar">
+      <div class="container subcat-ribbon-inner">
+        <a href="#catalog?sort=popular" class="subcat-chip promo">🔥 Chegirmalar vaqti</a>
+        <a href="#catalog?q=Apple" class="subcat-chip">✨ Jahon brendlari</a>
+        <a href="#catalog?category=smartfonlar" class="subcat-chip">📱 Smartfonlar</a>
+        <a href="#catalog?category=kompyuterlar" class="subcat-chip">💻 Kompyuterlar</a>
+        <a href="#catalog?category=maishiy-texnika" class="subcat-chip">🧺 Maishiy texnika</a>
+        <a href="#catalog?category=televizorlar" class="subcat-chip">📺 Televizorlar</a>
+        <a href="#catalog?category=mebellar" class="subcat-chip">🛋 Mebel</a>
+        <a href="#nasiya-info" class="subcat-chip gold">💳 Muddatli to‘lov</a>
+        <div class="yana-dropdown-wrap">
+          <button type="button" id="btn-yana-cats" class="subcat-chip yana-btn" aria-expanded="false">Yana ▾</button>
+          <div id="yana-dropdown-panel" class="yana-dropdown-panel hidden">
+            <a href="#catalog?category=kochmas-mulk">🏢 Ko‘chmas mulk (Faqat naqd)</a>
+            <a href="#calculator">🧮 Nasiya kalkulyatori</a>
+            <a href="#customer">💳 Mijoz kabineti</a>
+            <a href="#seller">🏪 Sotuvchi kabineti</a>
+            <a href="#admin">🛡 Admin boshqaruvi</a>
+          </div>
+        </div>
+      </div>
+    </nav>
+
     <!-- Role Workspace Bar -->
     <nav class="workspace-nav" aria-label="Ishchi bo‘limlar">
       <div class="container workspace-nav-inner">
         <a href="#home" class="ws-link" data-nav="home" data-i18n="nav_home">Bosh sahifa</a>
         <a href="#catalog" class="ws-link" data-nav="catalog" data-i18n="nav_catalog">Katalog</a>
+        <a href="#nasiya-info" class="ws-link" data-nav="nasiya-info">Muddatli to‘lov</a>
         <a href="#calculator" class="ws-link" data-nav="calculator">Nasiya kalkulyatori</a>
         <a href="#customer" class="ws-link" data-nav="customer" data-i18n="nav_cabinet">Mijoz kabineti</a>
         <a href="#seller" class="ws-link" data-nav="seller">Sotuvchi kabineti</a>
-        <a href="#seller-onboarding" class="ws-link" data-nav="seller-onboarding">Taklifnoma bilan kirish</a>
+        <a href="#seller-onboarding" class="ws-link" data-nav="seller-onboarding">Sotuvchi bo‘lish</a>
         <a href="#admin" class="ws-link" data-nav="admin">Admin &amp; Operatsiyalar</a>
       </div>
     </nav>

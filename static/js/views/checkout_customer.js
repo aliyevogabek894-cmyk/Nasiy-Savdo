@@ -1,5 +1,5 @@
 /* Cart, 3-Step Checkout (Nasiya / Multi-Bank / PSP), and Full Customer Cabinet */
-import { apiFetch, closeModal, esc, fmtDate, fmtUzs, genIdempotencyKey, openModal, showToast, statusBadge } from "../api.js";
+import { apiFetch, closeModal, esc, fmtDate, fmtUzs, genIdempotencyKey, openDeliveryPointPickerModal, openModal, showToast, statusBadge } from "../api.js";
 import { AppState } from "../i18n.js";
 import {
   openPspPayModal,
@@ -144,6 +144,7 @@ export async function renderCheckoutView(container, reloadCartBadge) {
   let deliveryType = AppState.deliveryPoint?.id ? "PICKUP" : "COURIER";
   let deliveryAddress = "Toshkent sh., Chilonzor tumani, 5-mavze";
   let deliveryPointId = AppState.deliveryPoint?.id || dps.results[0]?.id || "";
+  let recipientPhone = AppState.user?.phone || "";
   let paymentChannel = cart.installment_eligible ? "ZARVON_NASIYA" : "DIRECT_PAY";
   let pspProvider = "Payme";
   let months = 12;
@@ -186,10 +187,10 @@ export async function renderCheckoutView(container, reloadCartBadge) {
           ${
             step === 1
               ? `
-            <h2>1-qadam: Yetkazib berish usuli</h2>
+            <h2>1-qadam: Olish usuli va Buyurtma oluvchi</h2>
             <div class="flex-gap mb-3">
+              <button type="button" id="chk-del-pickup" class="btn ${deliveryType === "PICKUP" ? "btn-primary" : "btn-outline"}">📍 Topshirish punkti / BTS (bepul)</button>
               <button type="button" id="chk-del-courier" class="btn ${deliveryType === "COURIER" ? "btn-primary" : "btn-outline"}">🚚 Kuryer bilan manzilga</button>
-              <button type="button" id="chk-del-pickup" class="btn ${deliveryType === "PICKUP" ? "btn-primary" : "btn-outline"}">📍 Yig‘ish punktidan olish</button>
             </div>
             ${
               deliveryType === "COURIER"
@@ -199,12 +200,44 @@ export async function renderCheckoutView(container, reloadCartBadge) {
                      <span class="form-hint">Topshirishda kuryerga shaxsiy OTP-kod aytiladi (firibgarlikka qarshi himoya).</span>
                    </div>`
                 : `<div class="form-group">
-                     <label class="form-label" for="chk-dp">Yig‘ish punktini tanlang</label>
+                     <div class="flex justify-between items-center mb-1" style="flex-wrap:wrap; gap:6px;">
+                       <label class="form-label" for="chk-dp" style="margin:0;">Topshirish punkti yoki BTS Express filiali</label>
+                       <button type="button" id="chk-pick-bts-btn" class="btn btn-gold btn-xs">🗺 Barcha BTS punktlaridan qidirish / Yangi joy qo‘shish</button>
+                     </div>
                      <select id="chk-dp" class="form-control">
-                       ${dps.results.map((d) => `<option value="${esc(d.id)}" ${d.id === deliveryPointId ? "selected" : ""}>${esc(d.name)} — ${esc(d.address)} (${esc(d.working_hours)})</option>`).join("")}
+                       ${dps.results.map((d) => `<option value="${esc(d.id)}" ${String(d.id) === String(deliveryPointId) ? "selected" : ""}>${esc(d.name)} — ${esc(d.region)}, ${esc(d.address)} (${esc(d.working_hours)})</option>`).join("")}
                      </select>
                    </div>`
             }
+
+            <div class="card mb-3" style="background:var(--bg-subtle); padding:14px;">
+              <div class="flex justify-between items-center mb-2" style="flex-wrap:wrap; gap:6px;">
+                <strong>👤 Buyurtmani oluvchi (Telefon orqali aniqlash)</strong>
+                <button type="button" id="chk-switch-user-btn" class="btn btn-ghost btn-xs">Hisobni almashtirish / OTP</button>
+              </div>
+              <div class="grid-2" style="gap:10px; align-items:center;">
+                <div>
+                  <label class="form-label text-xs" for="chk-rec-phone">Oluvchi telefon raqami</label>
+                  <input id="chk-rec-phone" class="form-control" value="${esc(recipientPhone)}" placeholder="+998 90 123 45 67">
+                </div>
+                <div id="chk-rec-lookup-badge" class="text-xs" style="padding:8px 10px; border-radius:8px; background:var(--bg-surface); border:1px solid var(--border-color);">
+                  <strong>${esc(AppState.user?.full_name || "Mijoz")}</strong> (${esc(AppState.user?.phone || "")})
+                </div>
+              </div>
+            </div>
+
+            <div class="mb-3">
+              <div class="text-xs text-muted mb-1"><strong>📦 Ertaga / eng yaqin sanaga yetkaziladigan tovarlar (${cart.items.length} ta):</strong></div>
+              <div class="order-thumb-row">
+                ${cart.items.map((it) => `
+                  <div class="order-thumb-item" title="${esc(it.title)} × ${it.quantity}">
+                    <img src="${esc(it.primary_image || "/static/icons/product-default.svg")}" alt="${esc(it.title)}">
+                    <span class="order-thumb-qty">×${it.quantity}</span>
+                  </div>
+                `).join("")}
+              </div>
+            </div>
+
             <button id="chk-next-1" class="btn btn-gold mt-2">Keyingi qadam: To‘lov usuli →</button>
           `
               : step === 2
@@ -382,9 +415,57 @@ export async function renderCheckoutView(container, reloadCartBadge) {
       deliveryType = "PICKUP";
       renderStep();
     });
+    document.getElementById("chk-pick-bts-btn")?.addEventListener("click", () => {
+      openDeliveryPointPickerModal((picked) => {
+        if (!dps.results.some((x) => String(x.id) === String(picked.id))) {
+          dps.results.unshift(picked);
+        }
+        deliveryPointId = picked.id;
+        deliveryType = "PICKUP";
+        renderStep();
+      });
+    });
+    document.getElementById("chk-dp")?.addEventListener("change", (e) => {
+      deliveryPointId = e.target.value;
+    });
+    document.getElementById("chk-switch-user-btn")?.addEventListener("click", () => {
+      document.getElementById("btn-role-switcher")?.click();
+    });
+
+    let recTimer = null;
+    const recInput = document.getElementById("chk-rec-phone");
+    const recBadge = document.getElementById("chk-rec-lookup-badge");
+    const runRecLookup = async () => {
+      if (!recInput || !recBadge) return;
+      recipientPhone = recInput.value.trim();
+      if (recipientPhone.replace(/\D/g, "").length < 9) {
+        recBadge.textContent = "Kamida 9 ta raqam kiriting (tizim oluvchini aniqlaydi).";
+        return;
+      }
+      try {
+        const info = await apiFetch("/api/v1/auth/phone-lookup/", {
+          method: "POST",
+          body: JSON.stringify({ phone: recipientPhone }),
+        });
+        if (info.exists) {
+          recBadge.innerHTML = `<strong style="color:#15803d;">✓ Aniqlandi: ${esc(info.masked_name)}</strong> <span class="badge badge-navy">${esc(info.role_label)}</span>`;
+        } else {
+          recBadge.innerHTML = `<strong style="color:#b45309;">✦ Yangi oluvchi (${esc(info.normalized_phone)})</strong> — OTP xabari shu raqamga keladi.`;
+        }
+      } catch {
+        /* ignore minor format transient */
+      }
+    };
+    recInput?.addEventListener("input", () => {
+      clearTimeout(recTimer);
+      recTimer = setTimeout(runRecLookup, 250);
+    });
+    if (recInput && recipientPhone) runRecLookup();
+
     document.getElementById("chk-next-1")?.addEventListener("click", () => {
       if (deliveryType === "COURIER") deliveryAddress = document.getElementById("chk-addr").value;
       else deliveryPointId = document.getElementById("chk-dp").value;
+      if (recInput) recipientPhone = recInput.value.trim();
       step = 2;
       renderStep();
     });
@@ -477,11 +558,27 @@ export async function renderCheckoutView(container, reloadCartBadge) {
         });
         await reloadCartBadge();
         showToast("Buyurtma muvaffaqiyatli rasmiylashtirildi!", "success");
+        const pickedDp = dps.results.find((d) => String(d.id) === String(deliveryPointId));
         container.innerHTML = `
-          <div class="card card-elevated" style="max-width:680px;margin:0 auto;text-align:center;">
-            <span class="badge badge-success">✓ Buyurtma qabul qilindi</span>
-            <h1 class="mt-3">Buyurtma #${esc(res.order_number)}</h1>
-            <p class="text-secondary">Yetkazib berish va sotuvchi sub-buyurtmalari yaratildi:</p>
+          <div class="card card-elevated order-success-card">
+            <div class="order-check-circle" aria-hidden="true">✓</div>
+            <span class="badge badge-success">Buyurtma qabul qilindi</span>
+            <h1 class="mt-2" style="margin-bottom:4px;">Buyurtma #${esc(res.order_number)}</h1>
+            <p class="text-secondary text-sm mb-3">
+              ${
+                deliveryType === "PICKUP" && pickedDp
+                  ? `📍 Topshirish punkti: <strong>${esc(pickedDp.name)}</strong> (${esc(pickedDp.region)}, ${esc(pickedDp.address)})`
+                  : `🚚 Kuryer manzili: <strong>${esc(deliveryAddress)}</strong>`
+              }
+            </p>
+            <div class="order-thumb-row mb-3" style="justify-content:center;">
+              ${cart.items.map((it) => `
+                <div class="order-thumb-item" title="${esc(it.title)}">
+                  <img src="${esc(it.primary_image || "/static/icons/product-default.svg")}" alt="${esc(it.title)}">
+                  <span class="order-thumb-qty">×${it.quantity}</span>
+                </div>
+              `).join("")}
+            </div>
             <div class="table-wrap mt-3">
               <table class="data-table">
                 <thead><tr><th>Sub-buyurtma</th><th>Do‘kon</th><th>Topshirish OTP-kodi</th></tr></thead>
@@ -519,8 +616,8 @@ export async function renderCheckoutView(container, reloadCartBadge) {
                 : ""
             }
             <div class="flex-gap mt-4" style="justify-content:center;">
-              <a href="#customer" class="btn btn-primary">Mijoz kabinetiga o‘tish</a>
-              <a href="#catalog" class="btn btn-outline">Katalogga qaytish</a>
+              <a href="#customer/orders" class="btn btn-primary">Buyurtmalarim</a>
+              <a href="#catalog" class="btn btn-outline">Xaridlarni davom ettirish</a>
             </div>
           </div>
         `;

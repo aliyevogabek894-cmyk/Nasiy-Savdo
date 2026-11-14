@@ -41,10 +41,22 @@ from apps.inventory.models import Reservation, StockLevel, StockMovement
 
 
 class DeliveryPointListView(APIView):
-    permission_classes = [permissions.AllowAny]
+    def get_permissions(self):
+        if self.request.method == "POST":
+            return [permissions.IsAuthenticated()]
+        return [permissions.AllowAny()]
 
     def get(self, request):
+        from django.db.models import Q
+
         pts = DeliveryPoint.objects.filter(is_active=True)
+        q = (request.query_params.get("q") or "").strip()
+        region = (request.query_params.get("region") or "").strip()
+        if region:
+            pts = pts.filter(region__icontains=region)
+        if q:
+            pts = pts.filter(Q(name__icontains=q) | Q(region__icontains=q) | Q(address__icontains=q))
+        pts = pts.order_by("region", "name")
         return Response(
             {
                 "results": [
@@ -58,6 +70,37 @@ class DeliveryPointListView(APIView):
                     for p in pts
                 ]
             }
+        )
+
+    def post(self, request):
+        name = (request.data.get("name") or "").strip()[:120]
+        region = (request.data.get("region") or "").strip()[:80]
+        address = (request.data.get("address") or "").strip()[:255]
+        working_hours = (request.data.get("working_hours") or "09:00 – 20:00").strip()[:80]
+        if not name or not region or not address:
+            return Response(
+                {"detail": "Punkt nomi (masalan, BTS Express), viloyat/tuman va manzil majburiy."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        dp, created = DeliveryPoint.objects.get_or_create(
+            name=name,
+            region=region,
+            address=address,
+            defaults={"working_hours": working_hours, "is_active": True},
+        )
+        return Response(
+            {
+                "ok": True,
+                "created": created,
+                "point": {
+                    "id": str(dp.id),
+                    "name": dp.name,
+                    "region": dp.region,
+                    "address": dp.address,
+                    "working_hours": dp.working_hours,
+                },
+            },
+            status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
         )
 
 

@@ -11,6 +11,7 @@ from apps.accounts.views import (
     LogoutView,
     MakerCheckerDecisionView,
     MeView,
+    PhoneLookupView,
     ProfileView,
     RequestOtpView,
     StaffManagementView,
@@ -147,6 +148,7 @@ urlpatterns = [
 
     # Accounts, Auth, RBAC & Maker-Checker
     path("api/v1/auth/me/", MeView.as_view()),
+    path("api/v1/auth/phone-lookup/", PhoneLookupView.as_view()),
     path("api/v1/auth/otp/request/", RequestOtpView.as_view()),
     path("api/v1/auth/login/", LoginView.as_view()),
     path("api/v1/auth/demo-switch/", DemoRoleSwitchView.as_view()),

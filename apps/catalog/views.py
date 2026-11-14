@@ -253,12 +253,22 @@ class ProductDetailView(APIView):
             }
             for r in p.reviews.filter(is_approved=True)
         ]
-        similar = (
+        similar = list(
             Product.objects.filter(category=p.category, status=ProductStatus.APPROVED)
             .exclude(id=p.id)
             .select_related("store", "category", "brand", "stock")
             .prefetch_related("images")[:4]
         )
+        if len(similar) < 4:
+            seen_ids = {p.id, *[s.id for s in similar]}
+            extra = list(
+                Product.objects.filter(status=ProductStatus.APPROVED)
+                .exclude(id__in=seen_ids)
+                .select_related("store", "category", "brand", "stock")
+                .prefetch_related("images")
+                .order_by("-sales_count")[: 4 - len(similar)]
+            )
+            similar.extend(extra)
         data["similar_products"] = [_product_card_dict(s, default_plan, bhm_limit) for s in similar]
         return Response(data)
 

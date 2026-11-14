@@ -596,3 +596,24 @@ class Command(BaseCommand):
                     "sort_order": 3,
                 },
             )
+
+        bts_points = [
+            ("BTS Express — Furqat / Navbahor", "Farg‘ona viloyati", "Furqat tumani, Navbahor shaharchasi, 1012-uy", "09:00 – 19:00"),
+            ("BTS Express — Toshkent Chilonzor", "Toshkent", "Chilonzor tumani, Qatortol ko‘chasi 28", "09:00 – 20:00"),
+            ("BTS Express — Andijon Markaz", "Andijon", "Bobur shoh ko‘chasi 45", "09:00 – 19:00"),
+            ("BTS Express — Farg‘ona Markaz", "Farg‘ona", "Mustaqillik ko‘chasi 18", "09:00 – 19:00"),
+            ("BTS Express — Namangan Markaz", "Namangan", "Alisher Navoiy ko‘chasi 64", "09:00 – 19:00"),
+            ("BTS Express — Buxoro Markaz", "Buxoro", "Bahouddin Naqshband ko‘chasi 112", "09:00 – 19:00"),
+            ("BTS Express — Qarshi (Qashqadaryo)", "Qashqadaryo", "O‘zbekiston ko‘chasi 221", "09:00 – 19:00"),
+            ("BTS Express — Urganch (Xorazm)", "Xorazm", "Pahlavon Mahmud ko‘chasi 15", "09:00 – 19:00"),
+            ("BTS Express — Nukus (Qoraqalpog‘iston)", "Nukus", "Do‘stlik guzari 56", "09:00 – 19:00"),
+            ("BTS Express — Navoiy Markaz", "Navoiy", "G‘alaba shoh ko‘chasi 88", "09:00 – 19:00"),
+            ("BTS Express — Jizzax & Termiz", "Jizzax", "Sharof Rashidov shoh ko‘chasi 14", "09:00 – 19:00"),
+        ]
+        for dp_name, dp_reg, dp_addr, dp_hrs in bts_points:
+            DeliveryPoint.objects.get_or_create(
+                name=dp_name,
+                region=dp_reg,
+                address=dp_addr,
+                defaults={"working_hours": dp_hrs, "is_active": True},
+            )
