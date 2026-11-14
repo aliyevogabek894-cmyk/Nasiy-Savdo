@@ -120,8 +120,8 @@ export function renderProductCard(p) {
   const deliveryChip = p.delivery_badge || (p.delivery_sla_days <= 1 ? "Ertaga bepul" : `${p.delivery_sla_days} kunda bepul`);
 
   const nasiyaHtml = p.indicative_installment
-    ? `<div class="nasiya-pill-monthly tabular">
-         <span>oyiga <strong>${fmtUzs(p.indicative_installment.monthly_payment).replace(" so‘m", "")}</strong> so‘mdan</span>
+    ? `<div class="nasiya-pill-monthly tabular" title="${p.indicative_installment.months} oyga indikativ to‘lov">
+         <span>oyiga <strong>${fmtUzs(p.indicative_installment.monthly_payment).replace(" so‘m", "")}</strong> so‘m</span>
          <span class="nasiya-pill-term">${p.indicative_installment.months} oy</span>
        </div>`
     : `<div class="badge badge-warning" style="width:fit-content;">⊘ ${t("no_installment")}</div>`;
@@ -133,7 +133,7 @@ export function renderProductCard(p) {
          <button type="button" data-card-inc="${esc(p.id)}" aria-label="Ko‘paytirish" ${inCartQty >= p.stock_available ? "disabled" : ""}>+</button>
        </div>`
     : `<button class="btn btn-primary btn-sm btn-cart-pill" data-add-cart="${esc(p.id)}" ${p.stock_available <= 0 ? "disabled" : ""}>
-         ${p.stock_available > 0 ? `🛒 ${t("add_to_cart")}` : t("out_of_stock")}
+         ${p.stock_available > 0 ? "🛒 Savatga" : t("out_of_stock")}
        </button>`;
 
   return `
@@ -141,26 +141,24 @@ export function renderProductCard(p) {
       <div class="product-media" data-open-product="${esc(p.slug)}">
         <img src="${esc(p.primary_image || "/static/icons/product-default.svg")}" alt="${esc(p.title)}" loading="lazy">
         <div class="product-badges">
-          ${p.installment_eligible ? `<span class="badge badge-nasiya-soft">✦ Nasiya mavjud</span>` : `<span class="badge badge-warning">Faqat naqd</span>`}
-          ${p.discount_pct > 0 ? `<span class="badge badge-gold">-${p.discount_pct}%</span>` : ""}
+          ${p.discount_pct > 0 ? `<span class="badge badge-danger" style="font-weight:800;">-${p.discount_pct}%</span>` : ""}
         </div>
         <div class="product-top-actions">
           <button class="chip-btn ${isWished ? "active" : ""}" data-wishlist-id="${esc(p.id)}" title="Sevimlilar" aria-label="Sevimlilarga qo‘shish">${isWished ? "♥" : "♡"}</button>
           <button class="chip-btn ${isCompared ? "active" : ""}" data-compare-id="${esc(p.id)}" title="Taqqoslash" aria-label="Taqqoslashga qo‘shish">⚖</button>
         </div>
-        <span class="delivery-chip">🚚 ${esc(deliveryChip)}</span>
       </div>
       <div class="product-body">
         <div class="product-title" data-open-product="${esc(p.slug)}">${esc(p.title)}</div>
+        <div class="text-xs text-muted flex-between" style="gap:4px;">
+          <span>★ ${esc(p.rating)} (${esc(p.review_count)})</span>
+          <span style="color:#0d5c3e; font-weight:700;">🚚 ${esc(deliveryChip)}</span>
+        </div>
         <div class="price-row tabular">
           <span class="cash-price">${fmtUzs(p.cash_price)}</span>
           ${p.old_price ? `<span class="old-price">${fmtUzs(p.old_price)}</span>` : ""}
         </div>
         ${nasiyaHtml}
-        <div class="text-xs text-muted flex-between">
-          <span>★ ${esc(p.rating)} (${esc(p.review_count)})</span>
-          <span>${esc(p.store_name)}</span>
-        </div>
         <div class="card-action-split">
           <div class="card-cta-slot" data-slot-pid="${esc(p.id)}" data-stock="${p.stock_available}">${ctaHtml}</div>
           <button type="button" class="btn-more-dots" data-quick-view="${esc(p.slug)}" title="Tez ko‘rish va variantlar" aria-label="Tez ko‘rish">👁</button>

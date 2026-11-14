@@ -151,16 +151,6 @@ export async function renderHomeView(container, reloadCartBadge) {
           })
           .join("")}
       </div>
-      ${
-        cashOnlyCats.length
-          ? `<div class="flex-gap mt-2" style="padding:0 4px;">
-               <span class="text-xs text-muted">Qo‘shimcha toifalar:</span>
-               ${cashOnlyCats
-                 .map((c) => `<a href="#catalog?category=${esc(c.slug)}" class="quick-chip-link">${esc(c.name)} (Faqat naqd)</a>`)
-                 .join("")}
-             </div>`
-          : ""
-      }
     </section>
 
     <!-- Marquee Promo Ticker (Screen #2) -->
@@ -281,25 +271,7 @@ export async function renderHomeView(container, reloadCartBadge) {
       </aside>
     </section>
 
-    <!-- 5. Multi-Bank Offers Comparison -->
-    ${
-      bankPartners.length
-        ? `<section class="mt-6" aria-label="Hamkor banklar takliflari">
-             <div class="flex-between mb-3">
-               <div>
-                 <h2 style="margin:0;">🏦 Banklarning nasiya takliflarini solishtiring</h2>
-                 <p class="text-xs text-muted" style="margin:2px 0 0;">Yuqoridagi kalkulyator summasi (${fmtUzs(initCalc.principal)}) bo‘yicha real vaqtda yangilanadigan taxminiy bank takliflari</p>
-               </div>
-               <a href="#customer/kyc" class="btn btn-gold btn-sm">⚡ Shaxsiy limitimni tekshirish</a>
-             </div>
-             <div id="home-bank-offers" class="bank-offer-grid">
-               ${renderBankOffersHtml(bankPartners, initCalc.principal, 12)}
-             </div>
-           </section>`
-        : ""
-    }
-
-    <!-- 6. "Chegirmalar vaqti" Gradient Discount Matrix (Screen #2) -->
+    <!-- 5. "Chegirmalar vaqti" Gradient Discount Matrix (Screen #2) -->
     ${(() => {
       const seen = new Set();
       const promoDeals = [...(data.discounts || []), ...(data.popular || [])]
@@ -334,7 +306,7 @@ export async function renderHomeView(container, reloadCartBadge) {
                     ${oldPriceHtml}
                     <div class="chegirma-new tabular">${fmtUzs(p.cash_price)}</div>
                     <div style="font-size:0.86rem; font-weight:700; line-height:1.25; margin-bottom:6px;">${esc(p.title)}</div>
-                    <span class="badge badge-gold tabular" style="font-size:0.7rem;">oyiga ${fmtUzs(mPay).replace(" so‘m", "")} so‘mdan</span>
+                    <span class="badge badge-gold tabular" style="font-size:0.7rem;">oyiga ${fmtUzs(mPay).replace(" so‘m", "")} so‘m</span>
                   </div>
                   <img class="chegirma-thumb" src="${esc(p.primary_image || "/static/icons/product-default.svg")}" alt="${esc(p.title)}" loading="lazy">
                   ${badgeHtml}
@@ -346,6 +318,24 @@ export async function renderHomeView(container, reloadCartBadge) {
       `;
     })()}
 
+    <!-- 6. Multi-Bank Offers Comparison -->
+    ${
+      bankPartners.length
+        ? `<section class="mt-6" aria-label="Hamkor banklar takliflari">
+             <div class="flex-between mb-3">
+               <div>
+                 <h2 style="margin:0;">🏦 Banklarning nasiya takliflarini solishtiring</h2>
+                 <p class="text-xs text-muted" style="margin:2px 0 0;">Yuqoridagi kalkulyator summasi (${fmtUzs(initCalc.principal)}) bo‘yicha real vaqtda yangilanadigan taxminiy bank takliflari</p>
+               </div>
+               <a href="#customer/kyc" class="btn btn-gold btn-sm">⚡ Shaxsiy limitimni tekshirish</a>
+             </div>
+             <div id="home-bank-offers" class="bank-offer-grid">
+               ${renderBankOffersHtml(bankPartners, initCalc.principal, 12)}
+             </div>
+           </section>`
+        : ""
+    }
+
     <!-- 7. KATM + MIB Skoring CTA & Payment Gateways -->
     <section class="mt-6 card card-elevated" style="background:linear-gradient(125deg, #0d213f 0%, #193b68 100%);color:#ffffff;border:1px solid rgba(219,182,59,0.45);">
       <div class="flex-between" style="flex-wrap:wrap;gap:14px;">
@@ -355,7 +345,7 @@ export async function renderHomeView(container, reloadCartBadge) {
             <span class="psp-chip psp-chip-click">Click</span>
             <span class="psp-chip psp-chip-uzum">Uzum Bank</span>
             <span class="psp-chip psp-chip-paynet">Paynet</span>
-            <span class="psp-chip">🛡 KATM + MIB Skoring</span>
+            <span class="psp-chip" style="background:rgba(255,255,255,0.14);color:#ffffff;border-color:rgba(255,255,255,0.28);">🛡 KATM + MIB Skoring</span>
           </div>
           <h2 style="color:#ffffff;margin:0 0 4px;">INN / PINFL orqali 1 daqiqada shaxsiy nasiya limitini biling</h2>
           <div class="text-sm" style="color:#cbd5e1;">Boshqa banklardagi kredit yuklamasi, MIB ijro qarzlari va Markaziy Bankning 50% DSTI mezoni mijoz roziligi bilan tekshiriladi.</div>
@@ -413,7 +403,7 @@ export async function renderHomeView(container, reloadCartBadge) {
     dots.forEach((d) => d.addEventListener("click", () => goSlide(Number(d.dataset.heroDot))));
     document.getElementById("hero-prev")?.addEventListener("click", () => goSlide(slideIdx - 1));
     document.getElementById("hero-next")?.addEventListener("click", () => goSlide(slideIdx + 1));
-    let timer = setInterval(() => goSlide(slideIdx + 1), 5500);
+    let timer = setInterval(() => goSlide(slideIdx + 1), 7500);
     const stopTimer = () => {
       clearInterval(timer);
       window.removeEventListener("hashchange", stopTimer);
@@ -1290,7 +1280,7 @@ export async function renderNasiyaInfoView(container) {
           </p>
           <div class="flex gap-2 mt-4" style="flex-wrap:wrap;">
             <a href="#customer/kyc" class="btn btn-gold">⚡ Shaxsiy limitni aniqlash</a>
-            <a href="#calculator" class="btn btn-outline" style="color:#ffffff; border-color:rgba(255,255,255,0.4);">🧮 To‘lov jadvalini hisoblash</a>
+            <a href="#calculator" class="btn-hero-ghost">🧮 To‘lov jadvalini hisoblash</a>
           </div>
         </div>
         <div class="nasiya-badge-cluster" aria-label="Muddat variantlari">

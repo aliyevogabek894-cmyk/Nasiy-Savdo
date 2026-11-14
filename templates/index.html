@@ -8,7 +8,7 @@
   <title>ZARVON — Ko‘p sotuvchili Marketplace va Shaffof Muddatli To‘lov</title>
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="icon" type="image/svg+xml" href="{% static 'icons/zarvon-icon.svg' %}">
-  <link rel="stylesheet" href="{% static 'css/design-system.css' %}">
+  <link rel="stylesheet" href="{% static 'css/design-system.css' %}?v=20261114v4">
 </head>
 <body>
   <a href="#main-content" class="skip-link">Asosiy kontentga o‘tish</a>
@@ -18,16 +18,7 @@
     <span>⚠ Internet aloqasi uzildi. Maxfiy ma’lumotlar oflaynda keshlanmaydi; aloqa tiklangach davom eting.</span>
   </div>
 
-  <!-- Slim Dismissible Demo / Sandbox Notice Bar -->
-  <div id="top-notice-bar" class="top-notice-bar" role="region" aria-label="Platforma maqomi">
-    <div class="container top-notice-inner">
-      <span class="top-notice-badge" aria-hidden="true">i</span>
-      <span data-i18n="sandbox_notice">Demo (sinov) rejimi: Barcha nasiya va bank takliflari test ma’lumotlari. Hozircha real kredit va pul o‘tkazmalari amalga oshirilmaydi.</span>
-      <button id="btn-dismiss-notice" type="button" class="notice-close-btn" aria-label="Bildirishnomani yopish" title="Yopish">✕</button>
-    </div>
-  </div>
-
-  <!-- Top Utility Bar (Uzum Style City, PVZ/BTS, Seller, FAQ & Orders) -->
+  <!-- 1. Slim Top Utility Bar (Toshkent, BTS & PVZ, Seller, FAQ, Orders & Sandbox badge) -->
   <div class="utility-topbar">
     <div class="container utility-topbar-inner">
       <div class="flex-gap">
@@ -37,6 +28,7 @@
           <span aria-hidden="true">▾</span>
         </button>
         <button type="button" id="btn-open-pvz-list" class="utility-link">Topshirish punktlari (BTS &amp; PVZ)</button>
+        <span class="utility-sandbox-chip hide-mobile" data-i18n="sandbox_notice" title="Barcha nasiya va bank takliflari sinov rejimida ishlaydi">🛡 Demo/Sandbox rejimi</span>
       </div>
       <div class="utility-right-links">
         <a href="#seller-onboarding" class="utility-link highlight">Sotuvchi bo‘lish</a>
@@ -51,7 +43,7 @@
     </div>
   </div>
 
-  <!-- Main Sticky Dark-Navy Luxury Header -->
+  <!-- 2. Main Sticky Dark-Navy Luxury Header + White Sub-Category Ribbon -->
   <header class="site-header site-header-luxury" role="banner">
     <div class="container header-inner">
       <div class="header-left">
@@ -109,41 +101,31 @@
     <!-- Floating Mega-Catalog Popover (Hidden until Katalog clicked) -->
     <div id="mega-catalog-drawer" class="mega-catalog-drawer hidden" role="region" aria-label="Katalog menyusi"></div>
 
-    <!-- Sticky Sub-Header Quick Category & Campaign Ribbon (Screens #1, #3, #5) -->
+    <!-- 3. Clean White Sub-Header Quick Category & Campaign Ribbon (Uzum Style) -->
     <nav class="subcat-ribbon" aria-label="Tezkor toifalar va aksiyalar">
       <div class="container subcat-ribbon-inner">
         <a href="#catalog?sort=popular" class="subcat-chip promo">🔥 Chegirmalar vaqti</a>
         <a href="#catalog?q=Apple" class="subcat-chip">✨ Jahon brendlari</a>
         <a href="#catalog?category=smartfonlar" class="subcat-chip">📱 Smartfonlar</a>
-        <a href="#catalog?category=kompyuterlar" class="subcat-chip">💻 Kompyuterlar</a>
-        <a href="#catalog?category=maishiy-texnika" class="subcat-chip">🧺 Maishiy texnika</a>
+        <a href="#catalog?category=noutbuklar" class="subcat-chip">💻 Noutbuklar</a>
+        <a href="#catalog?category=sovutgichlar" class="subcat-chip">🧊 Sovutgichlar</a>
+        <a href="#catalog?category=kir-yuvish" class="subcat-chip">🧺 Kir yuvish</a>
         <a href="#catalog?category=televizorlar" class="subcat-chip">📺 Televizorlar</a>
-        <a href="#catalog?category=mebellar" class="subcat-chip">🛋 Mebel</a>
+        <a href="#catalog?category=mebel" class="subcat-chip">🛋 Mebel</a>
         <a href="#nasiya-info" class="subcat-chip gold">💳 Muddatli to‘lov</a>
+        <a href="#calculator" class="subcat-chip hide-mobile">🧮 Kalkulyator</a>
         <div class="yana-dropdown-wrap">
           <button type="button" id="btn-yana-cats" class="subcat-chip yana-btn" aria-expanded="false">Yana ▾</button>
           <div id="yana-dropdown-panel" class="yana-dropdown-panel hidden">
+            <a href="#home" data-nav="home">🏠 Bosh sahifa</a>
+            <a href="#catalog" data-nav="catalog">⊞ Barcha mahsulotlar</a>
             <a href="#catalog?category=kochmas-mulk">🏢 Ko‘chmas mulk (Faqat naqd)</a>
-            <a href="#calculator">🧮 Nasiya kalkulyatori</a>
-            <a href="#customer">💳 Mijoz kabineti</a>
-            <a href="#seller">🏪 Sotuvchi kabineti</a>
-            <a href="#admin">🛡 Admin boshqaruvi</a>
+            <a href="#calculator" data-nav="calculator">🧮 Nasiya kalkulyatori</a>
+            <a href="#customer" data-nav="customer">💳 Mijoz kabineti</a>
+            <a href="#seller" data-nav="seller">🏪 Sotuvchi kabineti</a>
+            <a href="#admin" data-nav="admin">🛡 Admin boshqaruvi</a>
           </div>
         </div>
-      </div>
-    </nav>
-
-    <!-- Role Workspace Bar -->
-    <nav class="workspace-nav" aria-label="Ishchi bo‘limlar">
-      <div class="container workspace-nav-inner">
-        <a href="#home" class="ws-link" data-nav="home" data-i18n="nav_home">Bosh sahifa</a>
-        <a href="#catalog" class="ws-link" data-nav="catalog" data-i18n="nav_catalog">Katalog</a>
-        <a href="#nasiya-info" class="ws-link" data-nav="nasiya-info">Muddatli to‘lov</a>
-        <a href="#calculator" class="ws-link" data-nav="calculator">Nasiya kalkulyatori</a>
-        <a href="#customer" class="ws-link" data-nav="customer" data-i18n="nav_cabinet">Mijoz kabineti</a>
-        <a href="#seller" class="ws-link" data-nav="seller">Sotuvchi kabineti</a>
-        <a href="#seller-onboarding" class="ws-link" data-nav="seller-onboarding">Sotuvchi bo‘lish</a>
-        <a href="#admin" class="ws-link" data-nav="admin">Admin &amp; Operatsiyalar</a>
       </div>
     </nav>
   </header>
@@ -209,6 +191,6 @@
   <div id="modal-root" class="modal-backdrop hidden" role="dialog" aria-modal="true"></div>
   <div id="toast-root" class="toast-stack" aria-live="polite"></div>
 
-  <script type="module" src="{% static 'js/app.js' %}"></script>
+  <script type="module" src="{% static 'js/app.js' %}?v=20261114v4"></script>
 </body>
 </html>

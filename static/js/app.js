@@ -559,6 +559,11 @@ function setupUzumShellInteractions() {
     yanaBtn.addEventListener("click", (e) => {
       e.stopPropagation();
       const willOpen = yanaPanel.classList.contains("hidden");
+      if (willOpen) {
+        const rect = yanaBtn.getBoundingClientRect();
+        yanaPanel.style.top = `${Math.round(rect.bottom + 6)}px`;
+        yanaPanel.style.right = `${Math.max(12, Math.round(window.innerWidth - rect.right))}px`;
+      }
       yanaPanel.classList.toggle("hidden", !willOpen);
       yanaBtn.setAttribute("aria-expanded", String(willOpen));
     });
