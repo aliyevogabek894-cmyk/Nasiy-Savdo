@@ -12,7 +12,7 @@ from rest_framework.views import APIView
 
 from config.permissions import ADMIN_ROLES, HasRolePermission
 from config.utils import encrypt_field, hash_identifier, mask_value
-from apps.accounts.models import User
+from apps.accounts.models import User, UserRole
 from apps.finance.models import (
     BankApplication,
     BankOffer,
@@ -47,7 +47,11 @@ from apps.finance.psp import (
     resolve_payment_target,
     settle_psp_payment,
 )
-from apps.finance.scoring import run_katm_and_mib_scoring
+from apps.finance.scoring import (
+    evaluate_customer_credit_policy,
+    notify_supervisors_credit_status,
+    run_katm_and_mib_scoring,
+)
 from apps.governance.models import AuditLog, BhmValue, ComplianceRuleVersion, NotificationEvent, SecurityEvent
 from apps.risk_collections.models import FraudCase, FraudSignal, RiskAssessment
 
@@ -252,12 +256,20 @@ class KycAndScoringView(APIView):
             lim.freeze_reason = ext.decision_reasons[0] if ext.decision_reasons else "KATM/MIB/DSTI cheklovi"
             lim.save(update_fields=["is_frozen", "freeze_reason", "updated_at"])
 
+        credit_policy = evaluate_customer_credit_policy(user)
+        supervisors_notified = notify_supervisors_credit_status(
+            user=user,
+            policy=credit_policy,
+            ext_report=ext,
+            trigger="SCORING_CHECK",
+        )
+
         AuditLog.record(
             actor=user,
             action="KATM_MIB_SCORING_COMPLETED",
             object_type="ExternalScoringReport",
             object_id=ext.id,
-            reason=f"Qaror: {ext.decision}, DSTI: {ext.dsti_before_pct}%, MIB: {ext.mib_status}",
+            reason=f"Qaror: {ext.decision}, Holat: {credit_policy['credit_condition_code']}, DSTI: {ext.dsti_before_pct}%, MIB: {ext.mib_status}, Nazoratchilar: {supervisors_notified}",
         )
         return Response(
             {
@@ -269,6 +281,8 @@ class KycAndScoringView(APIView):
                 "reason_codes": ext.decision_reasons,
                 "assessment_id": str(ra.id),
                 "is_demo_limit": ext.is_demo,
+                "supervisors_notified": supervisors_notified,
+                "credit_policy": credit_policy,
                 "message": (
                     ext.decision_reasons[0]
                     if ext.decision != "APPROVE" and ext.decision_reasons
@@ -494,6 +508,7 @@ class CustomerFinanceCabinetView(APIView):
                 },
                 "next_payment": next_payment,
                 "due_alerts": due_alerts,
+                "credit_policy": evaluate_customer_credit_policy(user),
                 "latest_scoring_report": latest_ext,
                 "payment_cards": cards_data,
                 "contracts": contracts_data,
@@ -1314,13 +1329,63 @@ class UpcomingPaymentsMonitorView(APIView):
 
 
 class AdminScoringReportsView(APIView):
-    """KATM Credit Bureau, MIB Debt & 50% DSTI Scoring telemetry monitor for Operations/Risk."""
+    """KATM Credit Bureau, MIB Debt, Cash-Only Credit Policy & Supervisor Alerts monitor for Risk/Auditors."""
 
     permission_classes = [HasRolePermission]
     allowed_roles = ADMIN_ROLES | {"RISK_ANALYST", "FINANCE_OPERATIONS", "FINANCE_OFFICER", "AUDITOR"}
 
     def get(self, request):
         reports = ExternalScoringReport.objects.select_related("user").all()[:40]
+        # Latest unique supervisor alerts (prefer alerts addressed to current supervisor, fallback to all supervisor alerts)
+        seen_corr = set()
+        supervisor_alerts = []
+        alert_qs = NotificationEvent.objects.filter(correlation_id__startswith="SUP-CREDIT:").order_by("-created_at")[:120]
+        for ev in alert_qs:
+            key = ev.correlation_id or f"{ev.title}:{ev.created_at:%Y%m%d%H%M}"
+            if key in seen_corr:
+                continue
+            seen_corr.add(key)
+            code = ""
+            if ":" in (ev.correlation_id or ""):
+                parts = ev.correlation_id.split(":")
+                code = parts[1] if len(parts) > 1 else ""
+            supervisor_alerts.append(
+                {
+                    "id": str(ev.id),
+                    "condition_code": code,
+                    "title": ev.title,
+                    "body_masked": ev.body_masked,
+                    "correlation_id": ev.correlation_id,
+                    "created_at": ev.created_at,
+                }
+            )
+            if len(supervisor_alerts) >= 25:
+                break
+
+        customers = list(User.objects.filter(role=UserRole.CUSTOMER, is_active=True).order_by("-created_at")[:25])
+        customers_credit_overview = []
+        cash_only_customers = 0
+        overdue_customers = 0
+        clean_customers = 0
+        for cu in customers:
+            pol = evaluate_customer_credit_policy(cu)
+            if pol["cash_only_required"]:
+                cash_only_customers += 1
+            else:
+                clean_customers += 1
+            if pol["has_overdue"]:
+                overdue_customers += 1
+            customers_credit_overview.append(
+                {
+                    "user_id": str(cu.id),
+                    "full_name": cu.full_name,
+                    "phone_masked": mask_value(cu.phone, 4, 2),
+                    "phone_raw": cu.phone,
+                    "kyc_status": cu.kyc_status,
+                    "credit_policy": pol,
+                }
+            )
+
         return Response(
             {
                 "reports": [
@@ -1353,16 +1418,99 @@ class AdminScoringReportsView(APIView):
                         "mib_details": r.mib_details,
                         "is_demo": r.is_demo,
                         "created_at": r.created_at,
+                        "credit_policy": evaluate_customer_credit_policy(r.user),
                     }
                     for r in reports
                 ],
+                "supervisor_alerts": supervisor_alerts,
+                "customers_credit_overview": customers_credit_overview,
                 "summary": {
                     "total": ExternalScoringReport.objects.count(),
                     "approved": ExternalScoringReport.objects.filter(decision="APPROVE").count(),
                     "manual_review": ExternalScoringReport.objects.filter(decision="MANUAL_REVIEW").count(),
                     "declined": ExternalScoringReport.objects.filter(decision="DECLINE").count(),
                     "mib_blocked": ExternalScoringReport.objects.filter(mib_status="BLOCKED").count(),
+                    "cash_only_customers": cash_only_customers,
+                    "overdue_customers": overdue_customers,
+                    "clean_customers": clean_customers,
                 },
+            }
+        )
+
+    @transaction.atomic
+    def post(self, request):
+        """Allow Supervisor/Risk/Admin to inspect any customer's live credit status and send supervisor alerts."""
+        user_id = request.data.get("user_id")
+        phone = (request.data.get("phone") or "").strip()
+        target = None
+        if user_id:
+            target = User.objects.filter(id=user_id, is_active=True).first()
+        elif phone:
+            digits = "".join(ch for ch in phone if ch.isdigit())
+            if len(digits) == 9:
+                normalized = f"+998{digits}"
+            elif digits.startswith("998") and len(digits) >= 12:
+                normalized = f"+{digits[:12]}"
+            else:
+                normalized = phone
+            target = User.objects.filter(phone=normalized, is_active=True).first()
+
+        if not target:
+            return Response({"detail": "Tekshirish uchun mijoz topilmadi."}, status=status.HTTP_404_NOT_FOUND)
+
+        refresh_bureau = bool(request.data.get("refresh_bureau", False))
+        scenario = (request.data.get("scenario") or "").strip()
+        ext = None
+        if refresh_bureau or scenario:
+            pinfl = (request.data.get("pinfl") or "").strip()
+            if len(pinfl) != 14 or not pinfl.isdigit():
+                # Deterministic sandbox PINFL fallback when supervisor checks a customer
+                pinfl = "31405940010012"
+            ext = run_katm_and_mib_scoring(
+                user=target,
+                pinfl=pinfl,
+                inn=(request.data.get("inn") or "").strip(),
+                birth_year=target.birth_year or 1994,
+                monthly_income_uzs=int(request.data.get("monthly_income_uzs") or 9_000_000),
+                scenario=scenario or "auto",
+            )
+            lim, _ = CustomerLimit.objects.get_or_create(user=target)
+            if ext.decision == "DECLINE":
+                lim.is_frozen = True
+                lim.freeze_reason = (ext.decision_reasons or ["Kredit / kechikish cheklovi"])[0]
+                lim.save(update_fields=["is_frozen", "freeze_reason", "updated_at"])
+            elif ext.decision == "APPROVE":
+                lim.is_frozen = False
+                lim.freeze_reason = ""
+                lim.total_limit_uzs = max(lim.used_limit_uzs, ext.recommended_limit_uzs)
+                lim.save(update_fields=["is_frozen", "freeze_reason", "total_limit_uzs", "updated_at"])
+
+        policy = evaluate_customer_credit_policy(target)
+        notified = notify_supervisors_credit_status(
+            user=target,
+            policy=policy,
+            ext_report=ext or ExternalScoringReport.objects.filter(user=target).first(),
+            trigger="SUPERVISOR_INSPECTION",
+            extra_note=f"Tekshiruvchi: {request.user.full_name} ({request.user.role}).",
+        )
+        AuditLog.record(
+            actor=request.user,
+            action="SUPERVISOR_CREDIT_INSPECTION",
+            object_type="User",
+            object_id=target.id,
+            reason=f"Holat: {policy['credit_condition_code']} ({policy['trading_mode_label']}), Xabar yuborildi: {notified} ta nazoratchi",
+        )
+        return Response(
+            {
+                "ok": True,
+                "customer": {
+                    "user_id": str(target.id),
+                    "full_name": target.full_name,
+                    "phone_masked": mask_value(target.phone, 4, 2),
+                },
+                "credit_policy": policy,
+                "supervisors_notified": notified,
+                "detail": f"Mijoz holati aniqlandi ({policy['trading_mode_label']}) va {notified} ta nazoratchiga xabar yuborildi.",
             }
         )
 

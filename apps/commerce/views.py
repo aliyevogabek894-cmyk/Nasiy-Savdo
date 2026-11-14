@@ -36,6 +36,7 @@ from apps.finance.models import (
 )
 from apps.finance.providers import ComplianceViolationError, OwnInstallmentProvider, PartnerFinanceProvider
 from apps.finance.psp import build_psp_checkout_payload
+from apps.finance.scoring import evaluate_customer_credit_policy, notify_supervisors_credit_status
 from apps.governance.models import AuditLog, BhmValue, ComplianceRuleVersion, NotificationEvent
 from apps.inventory.models import Reservation, StockLevel, StockMovement
 
@@ -148,6 +149,12 @@ class CartView(APIView):
             all_installment_ok = False
             prohibited_reasons.append(f"Jami summa 250 BHM ({bhm_limit:,} so‘m) chegarasidan oshdi.")
 
+        credit_policy = evaluate_customer_credit_policy(cart.user)
+        if credit_policy["cash_only_required"] and items:
+            all_installment_ok = False
+            if credit_policy["block_reason"] and credit_policy["block_reason"] not in prohibited_reasons:
+                prohibited_reasons.insert(0, credit_policy["block_reason"])
+
         return {
             "items": serialized_items,
             "seller_groups": list(seller_groups.values()),
@@ -155,6 +162,8 @@ class CartView(APIView):
             "installment_eligible": all_installment_ok,
             "prohibited_reasons": prohibited_reasons,
             "bhm_limit": bhm_limit,
+            "cash_only_required": credit_policy["cash_only_required"],
+            "credit_policy": credit_policy,
         }
 
     def get(self, request):
@@ -255,6 +264,32 @@ class CheckoutView(APIView):
         delivery_point = None
         if delivery_type == "PICKUP" and request.data.get("delivery_point_id"):
             delivery_point = DeliveryPoint.objects.filter(id=request.data["delivery_point_id"]).first()
+
+        # Credit & Overdue Policy Guard (BEFORE reserving stock so supervisor alerts commit cleanly on reject)
+        if payment_channel in {"ZARVON_NASIYA", "BANK_GATEWAY"}:
+            credit_policy = evaluate_customer_credit_policy(request.user)
+            if credit_policy["cash_only_required"]:
+                notify_supervisors_credit_status(
+                    user=request.user,
+                    policy=credit_policy,
+                    trigger="BLOCKED_NASIYA_CHECKOUT",
+                    extra_note=f"Bloklangan summa: {total_amount:,} so‘m ({payment_channel}).",
+                )
+                AuditLog.record(
+                    actor=request.user,
+                    action="NASIYA_BLOCKED_CASH_ONLY",
+                    object_type="Order",
+                    reason=credit_policy["block_reason"],
+                    after={"payment_channel": payment_channel, "total_amount": total_amount, "code": credit_policy["credit_condition_code"]},
+                )
+                return Response(
+                    {
+                        "detail": credit_policy["block_reason"],
+                        "cash_only_required": True,
+                        "credit_policy": credit_policy,
+                    },
+                    status=status.HTTP_403_FORBIDDEN,
+                )
 
         order_num = f"ZRV-{timezone.now().strftime('%y%m%d')}-{uuid.uuid4().hex[:5].upper()}"
 

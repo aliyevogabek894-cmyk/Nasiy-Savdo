@@ -78,9 +78,13 @@ export async function renderCartView(container, reloadCartBadge) {
           <span style="font-size:1.35rem;font-weight:800;">${fmtUzs(cart.subtotal)}</span>
         </div>
         ${
-          !cart.installment_eligible
+          cart.cash_only_required
+            ? `<div class="badge badge-danger mb-3" style="white-space:normal;padding:10px 12px;line-height:1.4;">
+                 💵 <strong>Faqat naqd savdo:</strong> ${esc((cart.credit_policy && cart.credit_policy.block_reason) || cart.prohibited_reasons.join(" "))}
+               </div>`
+            : !cart.installment_eligible
             ? `<div class="badge badge-warning mb-3" style="white-space:normal;">⚠ ${esc(cart.prohibited_reasons.join(" "))}</div>`
-            : `<div class="badge badge-success mb-3">✓ Barcha tovarlar nasiyaga mos (≤ 250 BHM)</div>`
+            : `<div class="badge badge-success mb-3">✓ Barcha tovarlar nasiyaga mos (≤ 250 BHM • kredit cheklovi yo‘q)</div>`
         }
         <a href="#checkout" class="btn btn-gold" style="width:100%;">3 qadamli kassaga o‘tish →</a>
       </div>
@@ -145,7 +149,9 @@ export async function renderCheckoutView(container, reloadCartBadge) {
   let deliveryAddress = "Toshkent sh., Chilonzor tumani, 5-mavze";
   let deliveryPointId = AppState.deliveryPoint?.id || dps.results[0]?.id || "";
   let recipientPhone = AppState.user?.phone || "";
-  let paymentChannel = cart.installment_eligible ? "ZARVON_NASIYA" : "DIRECT_PAY";
+  const creditBlocked = Boolean(cart.cash_only_required || cabinet.credit_policy?.cash_only_required);
+  const installmentLocked = !cart.installment_eligible || creditBlocked;
+  let paymentChannel = installmentLocked ? "DIRECT_PAY" : "ZARVON_NASIYA";
   let pspProvider = "Payme";
   let months = 12;
   let downPayment = 0;
@@ -243,11 +249,25 @@ export async function renderCheckoutView(container, reloadCartBadge) {
               : step === 2
               ? `
             <h2>2-qadam: To‘lov yoki Muddatli to‘lovni tanlang</h2>
+            ${
+              creditBlocked
+                ? `<div class="card mb-3" style="background:var(--danger-bg);border:1px solid var(--danger-fg, #dc2626);">
+                     <div class="flex-between" style="flex-wrap:wrap;gap:6px;">
+                       <strong>${esc(cabinet.credit_policy?.credit_condition_label || "⛔ Kredit cheklovi — Faqat naqd savdo")}</strong>
+                       <span class="badge badge-danger">${esc(cabinet.credit_policy?.trading_mode_label || "Faqat naqd savdo")}</span>
+                     </div>
+                     <p class="text-sm mt-2 mb-1">${esc(cart.credit_policy?.block_reason || cabinet.credit_policy?.block_reason || (cart.prohibited_reasons || []).join(" "))}</p>
+                     <div class="text-xs text-muted">Faol krediti yoki kechikkan to‘lovi bor mijozlarga faqat naqd / Click / Payme / Uzum / Karta to‘lovi ruxsat etiladi.</div>
+                   </div>`
+                : !cart.installment_eligible
+                ? `<div class="badge badge-warning mb-3" style="white-space:normal;">⚠ ${esc((cart.prohibited_reasons || []).join(" "))}</div>`
+                : ""
+            }
             <div class="flex-gap mb-4">
-              <button type="button" class="btn ${paymentChannel === "ZARVON_NASIYA" ? "btn-primary" : "btn-outline"}" data-ch="ZARVON_NASIYA" ${!cart.installment_eligible ? "disabled" : ""}>
+              <button type="button" class="btn ${paymentChannel === "ZARVON_NASIYA" ? "btn-primary" : "btn-outline"}" data-ch="ZARVON_NASIYA" ${installmentLocked ? "disabled" : ""}>
                 💳 ZARVON Nasiya (≤12 oy)
               </button>
-              <button type="button" class="btn ${paymentChannel === "BANK_GATEWAY" ? "btn-primary" : "btn-outline"}" data-ch="BANK_GATEWAY">
+              <button type="button" class="btn ${paymentChannel === "BANK_GATEWAY" ? "btn-primary" : "btn-outline"}" data-ch="BANK_GATEWAY" ${installmentLocked ? "disabled" : ""}>
                 🏦 Multi-Bank Gateway (Sandbox)
               </button>
               <button type="button" class="btn ${paymentChannel === "DIRECT_PAY" ? "btn-primary" : "btn-outline"}" data-ch="DIRECT_PAY">
@@ -691,8 +711,25 @@ export async function renderCustomerCabinetView(container, initialTab = "nasiya"
     const panel = document.getElementById("cust-panel");
     if (activeTab === "nasiya") {
       const cab = await apiFetch("/api/v1/finance/cabinet/");
+      const cp = cab.credit_policy;
+      const cpBlocked = Boolean(cp && cp.cash_only_required);
       panel.innerHTML = `
         ${renderDueAlertsHtml(cab.due_alerts)}
+        ${
+          cp
+            ? `<div class="card mb-4" style="background:${cpBlocked ? "var(--danger-bg)" : "var(--bg-subtle)"};border-left:4px solid ${cpBlocked ? "var(--danger-fg, #dc2626)" : "var(--success-fg, #15803d)"};">
+                 <div class="flex-between" style="flex-wrap:wrap;gap:8px;">
+                   <div>
+                     <span class="text-xs text-muted fw-bold">KREDIT HOLATI VA SAVDO REJIMI</span>
+                     <h3 style="margin:4px 0 2px;">${esc(cp.credit_condition_label)}</h3>
+                   </div>
+                   <span class="badge ${cpBlocked ? "badge-danger" : "badge-success"}">${esc(cp.trading_mode_label)}</span>
+                 </div>
+                 <p class="text-sm mt-2 mb-1">${esc(cp.credit_condition_detail)}</p>
+                 ${cpBlocked && cp.block_reason ? `<div class="text-xs fw-bold" style="color:var(--danger-fg, #b91c1c);">⛔ ${esc(cp.block_reason)}</div>` : ""}
+               </div>`
+            : ""
+        }
         <div class="grid-3 mb-4">
           <div class="kpi-card" style="border-left:4px solid var(--gold-500);">
             <div class="kpi-label">Bo‘sh nasiya limiti (DEMO • ${esc(cab.limit.tier)})</div>
@@ -786,6 +823,7 @@ export async function renderCustomerCabinetView(container, initialTab = "nasiya"
                 .join("")
             : `<p class="text-muted">Sizda hali nasiya shartnomalari yo‘q.</p>`
         }
+        ${renderKatmMibDstiReportHtml(cab.latest_scoring_report, cab.credit_policy)}
       `;
 
       panel.querySelectorAll("[data-pay-contract]").forEach((btn) => {
@@ -1009,11 +1047,11 @@ export async function renderCustomerCabinetView(container, initialTab = "nasiya"
                   <label class="form-label" for="k-scen">Sandbox Tekshiruv Ssenariysi</label>
                   <select id="k-scen" class="form-control">
                     <option value="auto">Avto (PINFL bo‘yicha)</option>
-                    <option value="clean">✓ Toza tarix (qarz yo‘q)</option>
-                    <option value="moderate_credit">ℹ Boshqa bankda kredit bor (me’yorda)</option>
-                    <option value="high_debt">⚠ Boshqa kreditlar ko‘p (DSTI > 50%)</option>
-                    <option value="overdue_katm">⛔ KATM 45 kun kechikish bor</option>
-                    <option value="mib_debt">⛔ MIB ijro qarzdorligi aniqlangan</option>
+                    <option value="clean">✓ Toza tarix (krediti yo‘q — Nasiya ochiq)</option>
+                    <option value="moderate_credit">⚠ Boshqa bankda krediti bor (Faqat naqd savdo)</option>
+                    <option value="high_debt">⚠ Boshqa kreditlar ko‘p (DSTI > 50% — Faqat naqd)</option>
+                    <option value="overdue_katm">⛔ KATM 45 kun kechikish bor (Blok)</option>
+                    <option value="mib_debt">⛔ MIB ijro qarzdorligi aniqlangan (Blok)</option>
                   </select>
                 </div>
               </div>
@@ -1044,7 +1082,7 @@ export async function renderCustomerCabinetView(container, initialTab = "nasiya"
             </div>
           </div>
         </div>
-        <div id="kyc-report-mount">${renderKatmMibDstiReportHtml(cab.latest_scoring_report)}</div>
+        <div id="kyc-report-mount">${renderKatmMibDstiReportHtml(cab.latest_scoring_report, cab.credit_policy)}</div>
       `;
       document.getElementById("kyc-form").addEventListener("submit", async (e) => {
         e.preventDefault();
@@ -1072,7 +1110,8 @@ export async function renderCustomerCabinetView(container, initialTab = "nasiya"
               liveness_passed: true,
             }),
           });
-          showToast(res.message || `Qaror: ${res.decision}`, res.decision === "DECLINE" ? "error" : "success");
+          const supNote = res.supervisors_notified ? ` (${res.supervisors_notified} ta nazoratchiga xabar yuborildi)` : "";
+          showToast(`${res.message || `Qaror: ${res.decision}`}${supNote}`, res.decision === "DECLINE" ? "error" : "success");
           load();
         } catch (err) {
           showToast(err.message, "error");

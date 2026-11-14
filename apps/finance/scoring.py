@@ -3,9 +3,18 @@ import uuid
 from django.conf import settings
 from django.utils import timezone
 
-from apps.finance.models import ContractStatus, ExternalScoringReport, InstallmentContract
-from apps.governance.models import BhmValue, ComplianceRuleVersion
+from apps.accounts.models import User, UserRole
+from apps.finance.models import ContractStatus, ExternalScoringReport, InstallmentContract, InstallmentScheduleItem
+from apps.governance.models import BhmValue, ComplianceRuleVersion, NotificationEvent, SecurityEvent
 from config.utils import compute_monthly_installment, mask_value
+
+SUPERVISOR_ROLES = [
+    UserRole.SUPER_ADMIN,
+    UserRole.RISK_MANAGER,
+    UserRole.AUDITOR,
+    UserRole.FINANCE_OFFICER,
+    UserRole.FRAUD_ANALYST,
+]
 
 
 def _build_bureau_payload(
@@ -82,7 +91,7 @@ def _build_bureau_payload(
             "external_obligations": obligations,
         }
 
-    if chosen == "moderate_credit":
+    if chosen in {"moderate_credit", "has_credit", "active_credit"}:
         ext_m1 = max(650_000, round(monthly_income_uzs * 0.14))
         ext_m2 = max(450_000, round(monthly_income_uzs * 0.10))
         return {
@@ -100,21 +109,259 @@ def _build_bureau_payload(
             ],
         }
 
-    # Default 'clean': good credit discipline, small active bank payment (~10% of income), zero MIB debt
-    small_ext = max(350_000, round(monthly_income_uzs * 0.08))
+    # Default 'clean': zero active credits, zero overdue, zero MIB debt -> eligible for Nasiya
     return {
         "scenario_tag": "clean",
         "mib_status": "CLEAN",
         "mib_debt_uzs": 0,
         "mib_active_cases_count": 0,
         "mib_details": [],
-        "katm_score": 768,
+        "katm_score": 785,
         "external_credit_history_grade": "A+",
         "external_overdue_days_max": 0,
-        "external_obligations": [
-            {"lender": "Kapitalbank (Sandbox)", "type": "Kredit karta / mikroqarz", "monthly_uzs": small_ext, "remaining_uzs": small_ext * 6, "status": "ON_TIME"},
-        ],
+        "external_obligations": [],
     }
+
+
+def _inspect_zarvon_credit_state(user) -> dict:
+    """Inspect active ZARVON installment contracts and unpaid/overdue schedule rows."""
+    today = timezone.localdate()
+    active_contracts = list(
+        InstallmentContract.objects.filter(
+            customer=user,
+            status__in=[
+                ContractStatus.SIGNED,
+                ContractStatus.ACTIVE,
+                ContractStatus.OVERDUE,
+                ContractStatus.RESTRUCTURED,
+                ContractStatus.ASSIGNED,
+            ],
+        ).prefetch_related("schedule_items")
+    )
+    monthly_uzs = 0
+    remaining_uzs = 0
+    overdue_count = 0
+    overdue_amount_uzs = 0
+    overdue_max_days = 0
+    contracts_summary = []
+
+    for c in active_contracts:
+        m_pay = int(c.summary_terms.get("monthly_payment") or (c.total_payable // max(1, c.months)))
+        monthly_uzs += m_pay
+        remaining_uzs += int(c.remaining_balance or 0)
+        c_overdue_days = 0
+        c_overdue_amt = 0
+
+        for item in c.schedule_items.all():
+            unpaid = max(0, int(item.amount_due or 0) + int(item.penalty_amount or 0) - int(item.amount_paid or 0))
+            if unpaid <= 0:
+                continue
+            is_overdue = item.status == "OVERDUE" or (item.status in {"UPCOMING", "PARTIAL"} and item.due_date < today)
+            if is_overdue:
+                overdue_count += 1
+                overdue_amount_uzs += unpaid
+                c_overdue_amt += unpaid
+                days = max(1, (today - item.due_date).days)
+                overdue_max_days = max(overdue_max_days, days)
+                c_overdue_days = max(c_overdue_days, days)
+
+        if c.status in {ContractStatus.OVERDUE, ContractStatus.WRITTEN_OFF} and c_overdue_days == 0:
+            overdue_count += 1
+            c_overdue_days = 1
+            overdue_max_days = max(overdue_max_days, 1)
+
+        contracts_summary.append(
+            {
+                "contract_number": c.contract_number,
+                "status": c.status,
+                "remaining_balance_uzs": int(c.remaining_balance or 0),
+                "monthly_payment_uzs": m_pay,
+                "overdue_days": c_overdue_days,
+                "overdue_amount_uzs": c_overdue_amt,
+            }
+        )
+
+    return {
+        "active_count": len(active_contracts),
+        "monthly_uzs": monthly_uzs,
+        "remaining_uzs": remaining_uzs,
+        "overdue_count": overdue_count,
+        "overdue_amount_uzs": overdue_amount_uzs,
+        "overdue_max_days": overdue_max_days,
+        "contracts_summary": contracts_summary,
+    }
+
+
+def evaluate_customer_credit_policy(user) -> dict:
+    """
+    Evaluate customer's live credit presence & condition across ZARVON + KATM + MIB.
+    Policy: any active credit, overdue payment, or MIB enforcement debt restricts customer to Cash-Only (`DIRECT_PAY`).
+    """
+    z = _inspect_zarvon_credit_state(user)
+    ext = ExternalScoringReport.objects.filter(user=user).first()
+
+    ext_active_count = int(ext.external_active_credits_count or 0) if ext else 0
+    ext_total_debt = int(ext.external_total_debt_uzs or 0) if ext else 0
+    ext_monthly = int(ext.external_monthly_obligations_uzs or 0) if ext else 0
+    ext_overdue_days = int(ext.external_overdue_days_max or 0) if ext else 0
+    ext_grade = ext.external_credit_history_grade if ext else "—"
+    katm_score = int(ext.katm_score or 0) if ext else 0
+    mib_status = ext.mib_status if ext else "UNCHECKED"
+    mib_debt = int(ext.mib_debt_uzs or 0) if ext else 0
+    mib_cases = int(ext.mib_active_cases_count or 0) if ext else 0
+
+    total_active_credits = z["active_count"] + ext_active_count
+    total_monthly = z["monthly_uzs"] + ext_monthly
+    has_overdue = z["overdue_count"] > 0 or ext_overdue_days > 0
+    has_mib_debt = mib_status == "BLOCKED" or mib_debt > 0
+    has_active_credit = total_active_credits > 0
+    cash_only_required = has_overdue or has_mib_debt or has_active_credit or (ext is not None and ext.decision == "DECLINE")
+
+    max_od_days = max(z["overdue_max_days"], ext_overdue_days)
+    block_reason = ""
+    if has_overdue:
+        code = "OVERDUE_BLOCKED"
+        label = f"⛔ Kechikkan krediti bor ({max_od_days} kun)"
+        detail = (
+            f"Mijozda kechikkan to‘lov aniqlandi (maks. {max_od_days} kun; "
+            f"ZARVON kechikkan qism: {z['overdue_amount_uzs']:,} so‘m). Nasiya yopildi."
+        )
+        trading_mode = "Faqat naqd savdo (Nasiya yopiq)"
+        block_reason = f"Kechikkan kreditingiz ({max_od_days} kun) mavjudligi sababli muddatli to‘lov cheklangan — faqat naqd yoki karta orqali xarid qilishingiz mumkin."
+    elif has_mib_debt:
+        code = "MIB_DEBT_BLOCKED"
+        label = f"⛔ MIB ijro qarzi bor ({mib_debt:,} so‘m)"
+        detail = f"Majburiy ijro byurosida {mib_cases} ta ijro ishi ({mib_debt:,} so‘m qarz) mavjud."
+        trading_mode = "Faqat naqd savdo (Nasiya yopiq)"
+        block_reason = f"MIB ijro qarzdorligi ({mib_debt:,} so‘m) aniqlangani sababli faqat naqd yoki karta bilan savdo qilish mumkin."
+    elif has_active_credit:
+        code = "ACTIVE_CREDIT_CASH_ONLY"
+        label = f"⚠ Faol krediti bor ({total_active_credits} ta — o‘z vaqtida to‘lanmoqda)"
+        detail = (
+            f"Mijozda {total_active_credits} ta faol kredit/nasiya mavjud "
+            f"(ZARVON: {z['active_count']} ta, KATM boshqa joylar: {ext_active_count} ta, oylik jami: {total_monthly:,} so‘m)."
+        )
+        trading_mode = "Faqat naqd savdo (Nasiya cheklangan)"
+        block_reason = f"Sizda {total_active_credits} ta faol kredit (oylik {total_monthly:,} so‘m) mavjudligi sababli qo‘shimcha nasiya berilmaydi — faqat naqd savdo qila olasiz."
+    elif ext is not None and ext.decision == "DECLINE":
+        code = "DSTI_DECLINED_CASH_ONLY"
+        label = f"⚠ Qarz yuki yuqori (DSTI {ext.dsti_before_pct}%)"
+        detail = (ext.decision_reasons or ["DSTI cheklovi sababli nasiya rad etilgan."])[0]
+        trading_mode = "Faqat naqd savdo (Nasiya cheklangan)"
+        block_reason = "Skoring qaroriga ko‘ra muddatli to‘lov cheklangan — faqat naqd yoki karta bilan savdo mumkin."
+    else:
+        code = "CLEAN_NO_CREDIT" if ext else "UNVERIFIED_NO_CREDIT"
+        label = "✓ Krediti yo‘q — toza tarix" if ext else "✓ Faol krediti aniqlanmagan (tekshiruv kutilmoqda)"
+        detail = "Platforma va KATM byurosida faol kredit, kechikish yoki MIB qarzi topilmadi."
+        trading_mode = "Nasiya va naqd savdo ochiq"
+
+    return {
+        "has_scoring_report": bool(ext),
+        "check_reference": ext.check_reference if ext else "",
+        "has_active_credit": has_active_credit,
+        "has_overdue": has_overdue,
+        "has_mib_debt": has_mib_debt,
+        "cash_only_required": cash_only_required,
+        "installment_allowed": not cash_only_required,
+        "credit_condition_code": code,
+        "credit_condition_label": label,
+        "credit_condition_detail": detail,
+        "trading_mode_label": trading_mode,
+        "block_reason": block_reason,
+        "zarvon_active_count": z["active_count"],
+        "zarvon_remaining_uzs": z["remaining_uzs"],
+        "zarvon_monthly_uzs": z["monthly_uzs"],
+        "zarvon_overdue_count": z["overdue_count"],
+        "zarvon_overdue_amount_uzs": z["overdue_amount_uzs"],
+        "zarvon_overdue_max_days": z["overdue_max_days"],
+        "zarvon_contracts_summary": z["contracts_summary"],
+        "external_active_count": ext_active_count,
+        "external_total_debt_uzs": ext_total_debt,
+        "external_monthly_uzs": ext_monthly,
+        "external_overdue_days_max": ext_overdue_days,
+        "external_grade": ext_grade,
+        "external_obligations_breakdown": ext.external_obligations_breakdown if ext else [],
+        "katm_score": katm_score,
+        "mib_status": mib_status,
+        "mib_debt_uzs": mib_debt,
+        "mib_active_cases_count": mib_cases,
+        "mib_details": ext.mib_details if ext else [],
+        "dsti_before_pct": ext.dsti_before_pct if ext else 0.0,
+        "dsti_after_pct": ext.dsti_after_pct if ext else 0.0,
+        "total_active_credits": total_active_credits,
+        "total_monthly_obligations_uzs": total_monthly,
+    }
+
+
+def notify_supervisors_credit_status(
+    *,
+    user,
+    policy: dict,
+    ext_report=None,
+    trigger: str = "SCORING_CHECK",
+    extra_note: str = "",
+) -> int:
+    """Send structured credit condition alert to all active Supervisors/Auditors/Risk Managers."""
+    supervisors = list(User.objects.filter(role__in=SUPERVISOR_ROLES, is_active=True))
+    if not supervisors:
+        return 0
+
+    ref = (ext_report.check_reference if ext_report else "") or f"CHK-{uuid.uuid4().hex[:8].upper()}"
+    masked_phone = mask_value(user.phone or "", 4, 2)
+    pinfl_mask = ext_report.pinfl_masked if ext_report else (mask_value(user.pinfl_hash or "", 2, 2) if user.pinfl_hash else "—")
+    prefix = "⛔ NAZORATCHI OGOHLANTIRISHI" if (policy["has_overdue"] or policy["has_mib_debt"]) else ("⚠ NAZORATCHI XABARI" if policy["has_active_credit"] else "✅ NAZORATCHI HISOBOTI")
+    title = f"{prefix}: {user.full_name} — {policy['credit_condition_label']}"
+    if len(title) > 158:
+        title = title[:155] + "..."
+
+    trig_uz = {
+        "SCORING_CHECK": "PINFL/KATM/MIB tekshiruvi",
+        "SUPERVISOR_INSPECTION": "Nazoratchi tomonidan tekshirildi",
+        "BLOCKED_NASIYA_CHECKOUT": "Kassada nasiya urinishi bloklandi",
+    }.get(trigger, trigger)
+
+    body = (
+        f"[{trig_uz}] Mijoz: {user.full_name} ({masked_phone}, PINFL: {pinfl_mask}). "
+        f"Kredit holati: {policy['credit_condition_detail']} "
+        f"KATM: {policy['katm_score'] or '—'} ({policy['external_grade']}), MIB: {policy['mib_status']} ({policy['mib_debt_uzs']:,} so‘m). "
+        f"Savdo rejimi: {policy['trading_mode_label']}."
+    )
+    if extra_note:
+        body = f"{body} {extra_note}"
+
+    corr = f"SUP-CREDIT:{policy['credit_condition_code']}:{ref}"
+    NotificationEvent.objects.bulk_create(
+        [
+            NotificationEvent(
+                user=sup,
+                channel="PUSH",
+                category="TRANSACTIONAL",
+                status="delivered",
+                title=title,
+                body_masked=body,
+                correlation_id=corr[:64],
+            )
+            for sup in supervisors
+        ]
+    )
+
+    if policy["has_overdue"] or policy["has_mib_debt"] or trigger == "BLOCKED_NASIYA_CHECKOUT":
+        SecurityEvent.objects.create(
+            event_type=f"CREDIT_POLICY_{policy['credit_condition_code']}",
+            severity="HIGH" if (policy["has_overdue"] or policy["has_mib_debt"]) else "MEDIUM",
+            user=user,
+            description=body,
+            details={
+                "trigger": trigger,
+                "cash_only_required": policy["cash_only_required"],
+                "total_active_credits": policy["total_active_credits"],
+                "overdue_days": max(policy["zarvon_overdue_max_days"], policy["external_overdue_days_max"]),
+                "mib_debt_uzs": policy["mib_debt_uzs"],
+                "check_reference": ref,
+            },
+        )
+
+    return len(supervisors)
 
 
 def run_katm_and_mib_scoring(
@@ -138,12 +385,9 @@ def run_katm_and_mib_scoring(
     income = max(1_000_000, int(monthly_income_uzs or 8_000_000))
     bureau = _build_bureau_payload(scenario=scenario, pinfl=pinfl, monthly_income_uzs=income)
 
-    # Sum customer's existing active monthly obligations inside ZARVON
-    active_contracts = InstallmentContract.objects.filter(
-        customer=user,
-        status__in=[ContractStatus.SIGNED, ContractStatus.ACTIVE, ContractStatus.OVERDUE, ContractStatus.RESTRUCTURED],
-    )
-    zarvon_monthly = sum(int(c.summary_terms.get("monthly_payment") or (c.total_payable // max(1, c.months))) for c in active_contracts)
+    # Inspect customer's live active & overdue installment contracts inside ZARVON
+    z_state = _inspect_zarvon_credit_state(user)
+    zarvon_monthly = z_state["monthly_uzs"]
 
     external_obligations = bureau["external_obligations"]
     external_monthly = sum(int(item["monthly_uzs"]) for item in external_obligations)
@@ -176,22 +420,30 @@ def run_katm_and_mib_scoring(
     if bureau["mib_status"] == "BLOCKED":
         decision = "DECLINE"
         recommended_limit = 0
-        reasons.append(f"MIB_DEBT_BLOCKED: Majburiy ijro byurosida {bureau['mib_debt_uzs']:,} so‘m qarzdorlik aniqlandi.")
+        reasons.append(f"MIB_DEBT_BLOCKED: Majburiy ijro byurosida {bureau['mib_debt_uzs']:,} so‘m qarzdorlik aniqlandi — faqat naqd savdo.")
     elif bureau["mib_status"] == "WARNING":
         decision = "MANUAL_REVIEW"
         reasons.append(f"MIB_WARNING: MIBda {bureau['mib_debt_uzs']:,} so‘m jarima mavjud.")
     else:
         reasons.append("MIB_CLEAN: Majburiy ijro byurosida qarzdorlik topilmadi.")
 
-    if bureau["external_overdue_days_max"] > 30:
+    if bureau["external_overdue_days_max"] > 0 or z_state["overdue_count"] > 0:
+        od_days = max(bureau["external_overdue_days_max"], z_state["overdue_max_days"])
         decision = "DECLINE"
         recommended_limit = 0
-        reasons.append(f"KATM_OVERDUE_BLOCK: Boshqa kredit tashkilotida {bureau['external_overdue_days_max']} kunlik kechikish mavjud.")
-    elif external_obligations:
         reasons.append(
-            f"KATM_OTHER_CREDITS_CHECKED: Boshqa joylarda {len(external_obligations)} ta faol kredit/nasiya, "
-            f"oylik to‘lov {external_monthly:,} so‘m ({bureau['external_credit_history_grade']} reyting)."
+            f"OVERDUE_CASH_ONLY: Kechikkan kredit/to‘lov ({od_days} kun) aniqlandi — muddatli to‘lov yopilgan, faqat naqd savdo qila oladi."
         )
+    elif external_obligations or z_state["active_count"] > 0:
+        tot_cnt = len(external_obligations) + z_state["active_count"]
+        decision = "DECLINE"
+        recommended_limit = 0
+        reasons.append(
+            f"ACTIVE_CREDIT_CASH_ONLY: Jami {tot_cnt} ta faol kredit/nasiya (oylik {existing_monthly_burden:,} so‘m, "
+            f"{bureau['external_credit_history_grade']} reyting) mavjud — faqat naqd savdo ruxsat etiladi."
+        )
+    else:
+        reasons.append("NO_ACTIVE_CREDIT_CLEAN: KATM va platforma bo‘yicha faol kredit hamda kechikish topilmadi.")
 
     if dsti_before >= 50.0 or max_safe_monthly < 250_000:
         decision = "DECLINE"

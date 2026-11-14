@@ -454,8 +454,14 @@ class Command(BaseCommand):
                 it3.due_date = today + timedelta(days=5)
                 it3.save(update_fields=["due_date"])
 
-        from apps.finance.scoring import run_katm_and_mib_scoring
-        if not ExternalScoringReport.objects.filter(user=customer).exists():
+        from apps.finance.scoring import (
+            evaluate_customer_credit_policy,
+            notify_supervisors_credit_status,
+            run_katm_and_mib_scoring,
+        )
+        from apps.governance.models import NotificationEvent
+        stale_demo_rep = ExternalScoringReport.objects.filter(user=customer, is_demo=True).order_by("-created_at").first()
+        if not stale_demo_rep or stale_demo_rep.decision == "APPROVE":
             run_katm_and_mib_scoring(
                 user=customer,
                 pinfl="31405940010012",
@@ -466,6 +472,12 @@ class Command(BaseCommand):
                 requested_months=12,
                 scenario="moderate_credit",
             )
+            lim_cust = CustomerLimit.objects.filter(user=customer).first()
+            if lim_cust:
+                lim_cust.total_limit_uzs = max(lim_cust.used_limit_uzs, 0)
+                lim_cust.is_frozen = True
+                lim_cust.freeze_reason = "Faol krediti borligi sababli faqat naqd savdo rejimi faollashtirilgan."
+                lim_cust.save(update_fields=["total_limit_uzs", "is_frozen", "freeze_reason", "updated_at"])
 
         if customer_new and not ExternalScoringReport.objects.filter(user=customer_new).exists():
             run_katm_and_mib_scoring(
@@ -478,6 +490,24 @@ class Command(BaseCommand):
                 requested_months=12,
                 scenario="high_debt",
             )
+
+        if not NotificationEvent.objects.filter(correlation_id__startswith="SUP-CREDIT:").exists():
+            for sample_user in [customer, customer_new]:
+                if not sample_user:
+                    continue
+                pol = evaluate_customer_credit_policy(sample_user)
+                latest_rep = (
+                    ExternalScoringReport.objects.filter(user=sample_user)
+                    .order_by("-created_at")
+                    .first()
+                )
+                notify_supervisors_credit_status(
+                    user=sample_user,
+                    policy=pol,
+                    ext_report=latest_rep,
+                    trigger="SEED_MONITOR",
+                    extra_note="Dastlabki mijoz kredit holati nazoratchi paneli uchun qayd etildi.",
+                )
 
         if not PaymentCard.objects.filter(user=customer).exists():
             PaymentCard.objects.create(

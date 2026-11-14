@@ -928,18 +928,130 @@ export async function renderAdminPortalView(container, refreshAuthCallback) {
         };
       } else if (activeTab === "scoring") {
         const sc = await apiFetch("/api/v1/finance/scoring-reports/");
+        const isAuditor = AppState.user?.role === "AUDITOR";
+        const customersList = sc.customers_credit_overview || [];
+        const alertsList = sc.supervisor_alerts || [];
+
+        const conditionBadge = (pol) => {
+          if (!pol) return statusBadge("PENDING");
+          if (pol.has_overdue || pol.has_mib_debt || pol.credit_condition_code === "DSTI_DECLINED_CASH_ONLY") {
+            return `<span class="badge badge-danger">${esc(pol.credit_condition_label)}</span>`;
+          }
+          if (pol.cash_only_required) {
+            return `<span class="badge badge-warning">${esc(pol.credit_condition_label)}</span>`;
+          }
+          return `<span class="badge badge-success">${esc(pol.credit_condition_label)}</span>`;
+        };
+
         panel.innerHTML = `
-          <h2 class="mb-3">INN/PINFL + KATM Kredit Byurosi + MIB Qarzdorlik + 50% DSTI Monitoring</h2>
+          <h2 class="mb-3">Nazoratchi Markazi: KATM Kredit + MIB + DSTI va Faqat Naqd Savdo Nazorati</h2>
           <div class="grid-4 mb-4 tabular">
-            <div class="kpi-card"><div class="kpi-label">Jami Skoringlar</div><div class="kpi-value">${sc.summary.total}</div></div>
-            <div class="kpi-card"><div class="kpi-label">Tasdiqlangan</div><div class="kpi-value">${sc.summary.approved}</div></div>
-            <div class="kpi-card"><div class="kpi-label">Qo‘shimcha ko‘rik</div><div class="kpi-value">${sc.summary.manual_review}</div></div>
-            <div class="kpi-card"><div class="kpi-label">MIB Blok / Rad</div><div class="kpi-value" style="color:var(--danger-fg);">${sc.summary.mib_blocked} / ${sc.summary.declined}</div></div>
+            <div class="kpi-card"><div class="kpi-label">Jami Skoringlar</div><div class="kpi-value">${sc.summary.total}</div><div class="text-xs text-muted">Tasdiqlangan: ${sc.summary.approved} • MIB Blok: ${sc.summary.mib_blocked}</div></div>
+            <div class="kpi-card" style="border-left:4px solid var(--danger-fg, #dc2626);"><div class="kpi-label">Faqat Naqd Cheklovi</div><div class="kpi-value" style="color:var(--danger-fg);">${sc.summary.cash_only_customers ?? 0}</div><div class="text-xs text-muted">Krediti yoki qarzi bor mijozlar</div></div>
+            <div class="kpi-card" style="border-left:4px solid #d97706;"><div class="kpi-label">Kechikkan Mijozlar</div><div class="kpi-value" style="color:#d97706;">${sc.summary.overdue_customers ?? 0}</div><div class="text-xs text-muted">Nasiya to‘liq bloklangan</div></div>
+            <div class="kpi-card" style="border-left:4px solid var(--success-fg, #15803d);"><div class="kpi-label">Krediti yo‘q (Toza)</div><div class="kpi-value" style="color:var(--success-fg);">${sc.summary.clean_customers ?? 0}</div><div class="text-xs text-muted">Nasiya savdo ochiq</div></div>
           </div>
 
+          <div class="card mb-4" style="background:var(--bg-subtle);">
+            <div class="flex-between mb-2" style="flex-wrap:wrap;gap:8px;">
+              <div>
+                <h3 style="margin:0;">🔍 Mijoz kredit ahvolini o‘rganish va Nazoratchiga xabar yuborish</h3>
+                <div class="text-xs text-muted">Krediti bormi/yo‘qmi, qanday ahvolda va savdo rejimi (Faqat naqd / Nasiya ochiq) darhol tekshiriladi.</div>
+              </div>
+              ${isAuditor ? `<span class="badge badge-navy">Auditor: Faqat ko‘rish</span>` : ""}
+            </div>
+            ${
+              isAuditor
+                ? `<div class="text-sm text-muted">Auditor rejimi: siz barcha nazorat xabarlari va kredit ahvolini ko‘rasiz, qo‘lda qayta skoring faqat Risk Manager / Admin uchun.</div>`
+                : `<form id="sup-inspect-form" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));align-items:end;gap:10px;">
+                     <div class="form-group" style="margin:0;min-width:0;">
+                       <label class="form-label" for="sup-user-id">Ro‘yxatdan mijoz tanlash</label>
+                       <select id="sup-user-id" class="form-control" style="max-width:100%;">
+                         <option value="">— Telefon orqali —</option>
+                         ${customersList
+                           .map(
+                             (c) => `<option value="${esc(c.user_id)}">${esc(c.full_name)} (${esc(c.phone_raw)})</option>`
+                           )
+                           .join("")}
+                       </select>
+                     </div>
+                     <div class="form-group" style="margin:0;min-width:0;">
+                       <label class="form-label" for="sup-phone">Yoki telefon raqami</label>
+                       <input id="sup-phone" class="form-control" placeholder="+998901110001">
+                     </div>
+                     <div class="form-group" style="margin:0;min-width:0;">
+                       <label class="form-label" for="sup-scenario">KATM / MIB Tekshiruv</label>
+                       <select id="sup-scenario" class="form-control" style="max-width:100%;">
+                         <option value="">Joriy holatni xabar berish</option>
+                         <option value="auto">Byuroni yangilash (Avto)</option>
+                         <option value="clean">Yangilash: Toza (krediti yo‘q)</option>
+                         <option value="moderate_credit">Yangilash: Faol krediti bor</option>
+                         <option value="overdue_katm">Yangilash: Kechikish bor (45 kun)</option>
+                         <option value="mib_debt">Yangilash: MIB ijro qarzi bor</option>
+                       </select>
+                     </div>
+                     <button type="submit" class="btn btn-gold" style="width:100%;">🛡 Tekshirish & Xabar</button>
+                   </form>`
+            }
+          </div>
+
+          <div class="card mb-4">
+            <div class="flex-between mb-2">
+              <h3 style="margin:0;">🚨 Nazoratchiga kelgan kredit xabarlari (${alertsList.length})</h3>
+              <span class="badge badge-navy">Real vaqt monitoring</span>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:8px;max-height:280px;overflow:auto;">
+              ${
+                alertsList.length
+                  ? alertsList
+                      .map((a) => {
+                        const isDanger = ["OVERDUE_BLOCKED", "MIB_DEBT_BLOCKED", "DSTI_DECLINED_CASH_ONLY"].includes(a.condition_code);
+                        const isWarn = a.condition_code === "ACTIVE_CREDIT_CASH_ONLY";
+                        const bg = isDanger ? "var(--danger-bg)" : isWarn ? "rgba(217,119,6,0.12)" : "var(--bg-subtle)";
+                        return `
+                          <div style="padding:10px 12px;border-radius:10px;background:${bg};border:1px solid var(--border-color);">
+                            <div class="flex-between" style="flex-wrap:wrap;gap:6px;">
+                              <strong>${esc(a.title)}</strong>
+                              <span class="text-xs text-muted">${fmtDate(a.created_at)}</span>
+                            </div>
+                            <div class="text-xs mt-1">${esc(a.body_masked)}</div>
+                          </div>`;
+                      })
+                      .join("")
+                  : `<div class="text-sm text-muted">Hali kredit nazorati xabarlari qayd etilmagan.</div>`
+              }
+            </div>
+          </div>
+
+          <h3 class="mb-2">👥 Mijozlarning jonli kredit ahvoli va savdo rejimi</h3>
+          <div class="table-wrap mb-4">
+            <table class="data-table text-sm tabular">
+              <thead><tr><th>Mijoz</th><th>Telefon (niqob)</th><th>KYC</th><th>Kredit Ahvoli</th><th>Tafsilot</th><th>Savdo Rejimi</th></tr></thead>
+              <tbody>
+                ${
+                  customersList
+                    .map((c) => {
+                      const cp = c.credit_policy || {};
+                      return `
+                        <tr>
+                          <td><strong>${esc(c.full_name)}</strong></td>
+                          <td class="text-xs">${esc(c.phone_masked)}</td>
+                          <td>${statusBadge(c.kyc_status)}</td>
+                          <td>${conditionBadge(cp)}</td>
+                          <td class="text-xs" style="max-width:340px;">${esc(cp.credit_condition_detail || "")}</td>
+                          <td><span class="badge ${cp.cash_only_required ? "badge-danger" : "badge-success"}">${esc(cp.trading_mode_label || "Nasiya ochiq")}</span></td>
+                        </tr>`;
+                    })
+                    .join("") || "<tr><td colspan='6'>Mijozlar topilmadi</td></tr>"
+                }
+              </tbody>
+            </table>
+          </div>
+
+          <h3 class="mb-2">📊 KATM + MIB Skoring Hisobotlari Tarixi</h3>
           <div class="table-wrap">
             <table class="data-table text-sm tabular">
-              <thead><tr><th>Mijoz</th><th>PINFL / INN (niqob)</th><th>KATM Ball</th><th>MIB Holati</th><th>Boshqa kredit/oy</th><th>DSTI % (≤50%)</th><th>Limit</th><th>Qaror</th></tr></thead>
+              <thead><tr><th>Mijoz</th><th>PINFL / INN (niqob)</th><th>KATM Ball</th><th>MIB Holati</th><th>Boshqa kredit/oy</th><th>DSTI % (≤50%)</th><th>Limit</th><th>Kredit Ahvoli / Savdo</th><th>Qaror</th></tr></thead>
               <tbody>
                 ${sc.reports
                   .map(
@@ -952,14 +1064,44 @@ export async function renderAdminPortalView(container, refreshAuthCallback) {
                     <td>${fmtUzs(r.external_monthly_obligations_uzs)}<br><span class="text-xs text-muted">${(r.external_obligations_breakdown || []).length} ta kredit</span></td>
                     <td><strong>${r.dsti_after_pct}%</strong> (avval ${r.dsti_before_pct}%)<br><span class="text-xs text-muted">Daromad: ${fmtUzs(r.monthly_income_uzs)}</span></td>
                     <td class="fw-bold">${fmtUzs(r.recommended_limit_uzs)}</td>
+                    <td>${conditionBadge(r.credit_policy)}<br><span class="badge mt-1 ${r.credit_policy?.cash_only_required ? "badge-danger" : "badge-success"}">${esc(r.credit_policy?.trading_mode_label || "")}</span></td>
                     <td>${statusBadge(r.decision)}<br><span class="text-xs text-muted">${esc((r.decision_reasons || [])[0] || "")}</span></td>
                   </tr>`
                   )
-                  .join("") || "<tr><td colspan='8'>Skoring hisobotlari hali yo‘q</td></tr>"}
+                  .join("") || "<tr><td colspan='9'>Skoring hisobotlari hali yo‘q</td></tr>"}
               </tbody>
             </table>
           </div>
         `;
+
+        const supForm = document.getElementById("sup-inspect-form");
+        if (supForm) {
+          supForm.addEventListener("submit", async (e) => {
+            e.preventDefault();
+            const userId = document.getElementById("sup-user-id").value;
+            const phone = document.getElementById("sup-phone").value.trim();
+            const scenario = document.getElementById("sup-scenario").value;
+            if (!userId && !phone) {
+              showToast("Avval ro‘yxatdan mijoz tanlang yoki telefon raqami kiriting.", "error");
+              return;
+            }
+            try {
+              const res = await apiFetch("/api/v1/finance/scoring-reports/", {
+                method: "POST",
+                body: JSON.stringify({
+                  user_id: userId || undefined,
+                  phone: phone || undefined,
+                  scenario: scenario || undefined,
+                  refresh_bureau: Boolean(scenario),
+                }),
+              });
+              showToast(res.detail, res.credit_policy?.cash_only_required ? "warning" : "success");
+              load();
+            } catch (err) {
+              showToast(err.message, "error");
+            }
+          });
+        }
       }
     } catch (err) {
       panel.innerHTML = `

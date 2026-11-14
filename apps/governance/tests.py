@@ -797,3 +797,155 @@ class UzumPspAndMarketplaceFlowTests(_DjangoTestCase):
         self.assertGreaterEqual(len(sim), 1)
         self.assertLessEqual(len(sim), 4)
         self.assertTrue(all(str(x["id"]) != str(self.product.id) for x in sim))
+
+    def test_credit_condition_cash_only_policy_and_supervisor_alerts(self):
+        from apps.accounts.models import UserRole as _Role
+        from apps.finance.models import CustomerConsent as _Consent, InstallmentPlan as _Plan
+        from apps.governance.models import NotificationEvent as _Notif
+
+        super_admin = _TestUser.objects.filter(role=_Role.SUPER_ADMIN, is_active=True).first()
+        auditor = _TestUser.objects.filter(role=_Role.AUDITOR, is_active=True).first()
+        plan12 = _Plan.objects.filter(months=12, is_active=True).first()
+        self.assertIsNotNone(super_admin)
+        self.assertIsNotNone(auditor)
+        self.assertIsNotNone(plan12)
+
+        clean_cust = _TestUser.objects.create_user(
+            "+998901999001",
+            "Pass1234!",
+            full_name="Toza Mijoz",
+            role=_Role.CUSTOMER,
+        )
+        self.client.force_authenticate(user=clean_cust)
+        c_res = self.client.post(
+            "/api/v1/finance/consents/",
+            {"purposes": {"IDENTITY": True, "CREDIT_BUREAU": True, "BANK_TRANSFER": True}},
+            format="json",
+        )
+        self.assertEqual(c_res.status_code, 200, c_res.data)
+
+        # 1. Clean history (0 credits, 0 overdue) -> Nasiya open + supervisor notified
+        clean_res = self.client.post(
+            "/api/v1/finance/kyc/verify/",
+            {
+                "pinfl": "31908950010991",
+                "inn": "309998811",
+                "passport": "AA1234567",
+                "birth_year": 1995,
+                "monthly_income_uzs": 9_500_000,
+                "scenario": "clean",
+                "liveness_passed": True,
+            },
+            format="json",
+        )
+        self.assertEqual(clean_res.status_code, 200, clean_res.data)
+        self.assertEqual(clean_res.data["decision"], "APPROVE")
+        self.assertFalse(clean_res.data["credit_policy"]["cash_only_required"])
+        self.assertEqual(clean_res.data["credit_policy"]["credit_condition_code"], "CLEAN_NO_CREDIT")
+        self.assertGreaterEqual(clean_res.data["supervisors_notified"], 1)
+        self.assertTrue(
+            _Notif.objects.filter(
+                user=super_admin,
+                correlation_id__startswith="SUP-CREDIT:CLEAN_NO_CREDIT:",
+            ).exists()
+        )
+
+        # 2. Active external credit -> Cash-Only enforced across Scoring, Cart & Checkout
+        mod_res = self.client.post(
+            "/api/v1/finance/kyc/verify/",
+            {
+                "pinfl": "31908950010991",
+                "inn": "309998811",
+                "passport": "AA1234567",
+                "birth_year": 1995,
+                "monthly_income_uzs": 9_500_000,
+                "scenario": "moderate_credit",
+                "liveness_passed": True,
+            },
+            format="json",
+        )
+        self.assertEqual(mod_res.status_code, 200, mod_res.data)
+        self.assertEqual(mod_res.data["decision"], "DECLINE")
+        self.assertTrue(mod_res.data["credit_policy"]["cash_only_required"])
+        self.assertEqual(mod_res.data["credit_policy"]["credit_condition_code"], "ACTIVE_CREDIT_CASH_ONLY")
+
+        self.client.post(
+            "/api/v1/commerce/cart/",
+            {"product_id": str(self.product.id), "quantity": 1},
+            format="json",
+        )
+        cart_res = self.client.get("/api/v1/commerce/cart/")
+        self.assertEqual(cart_res.status_code, 200)
+        self.assertTrue(cart_res.data["cash_only_required"])
+        self.assertFalse(cart_res.data["installment_eligible"])
+
+        nasiya_blk = self.client.post(
+            "/api/v1/commerce/checkout/",
+            {
+                "delivery_type": "COURIER",
+                "delivery_address": "Toshkent, Chilonzor",
+                "payment_channel": "ZARVON_NASIYA",
+                "plan_id": str(plan12.id),
+                "months": 12,
+                "down_payment": 0,
+            },
+            format="json",
+        )
+        self.assertEqual(nasiya_blk.status_code, 403, nasiya_blk.data)
+        self.assertTrue(nasiya_blk.data["cash_only_required"])
+
+        bank_blk = self.client.post(
+            "/api/v1/commerce/checkout/",
+            {
+                "delivery_type": "COURIER",
+                "delivery_address": "Toshkent, Chilonzor",
+                "payment_channel": "BANK_GATEWAY",
+                "months": 12,
+            },
+            format="json",
+        )
+        self.assertEqual(bank_blk.status_code, 403, bank_blk.data)
+        self.assertTrue(
+            _TestSecurityEvent.objects.filter(
+                user=clean_cust,
+                event_type="CREDIT_POLICY_ACTIVE_CREDIT_CASH_ONLY",
+            ).exists()
+        )
+
+        # DIRECT_PAY (Naqd / Click / Payme / Uzum / Karta) remains allowed!
+        direct_ok = self.client.post(
+            "/api/v1/commerce/checkout/",
+            {
+                "delivery_type": "COURIER",
+                "delivery_address": "Toshkent, Chilonzor",
+                "payment_channel": "DIRECT_PAY",
+                "psp_provider": "Payme",
+            },
+            format="json",
+        )
+        self.assertEqual(direct_ok.status_code, 201, direct_ok.data)
+
+        # 3. Supervisor inspection & Auditor read-only RBAC
+        self.client.force_authenticate(user=auditor)
+        aud_get = self.client.get("/api/v1/finance/scoring-reports/")
+        self.assertEqual(aud_get.status_code, 200)
+        self.assertGreaterEqual(len(aud_get.data["supervisor_alerts"]), 1)
+        self.assertGreaterEqual(aud_get.data["summary"]["cash_only_customers"], 1)
+        aud_post = self.client.post(
+            "/api/v1/finance/scoring-reports/",
+            {"user_id": str(clean_cust.id), "scenario": "overdue_katm", "refresh_bureau": True},
+            format="json",
+        )
+        self.assertEqual(aud_post.status_code, 403)
+
+        self.client.force_authenticate(user=super_admin)
+        sup_post = self.client.post(
+            "/api/v1/finance/scoring-reports/",
+            {"user_id": str(clean_cust.id), "scenario": "overdue_katm", "refresh_bureau": True},
+            format="json",
+        )
+        self.assertEqual(sup_post.status_code, 200, sup_post.data)
+        self.assertTrue(sup_post.data["ok"])
+        self.assertTrue(sup_post.data["credit_policy"]["cash_only_required"])
+        self.assertEqual(sup_post.data["credit_policy"]["credit_condition_code"], "OVERDUE_BLOCKED")
+        self.assertGreaterEqual(sup_post.data["supervisors_notified"], 1)

@@ -42,9 +42,50 @@ export function renderDueAlertsHtml(dueAlerts = []) {
     .join("");
 }
 
-export function renderKatmMibDstiReportHtml(rep) {
+function renderCreditPolicyBannerHtml(creditPolicy, hasBureauReport = true) {
+  if (!creditPolicy) return "";
+  const isBlocked = Boolean(creditPolicy.cash_only_required);
+  const bg = creditPolicy.has_overdue || creditPolicy.has_mib_debt
+    ? "var(--danger-bg)"
+    : isBlocked
+    ? "rgba(217, 119, 6, 0.14)"
+    : "var(--success-bg, rgba(21, 128, 61, 0.10))";
+  const border = creditPolicy.has_overdue || creditPolicy.has_mib_debt
+    ? "var(--danger-fg, #dc2626)"
+    : isBlocked
+    ? "#d97706"
+    : "var(--success-fg, #15803d)";
+  const modeBadgeClass = isBlocked ? "badge-danger" : "badge-success";
+
+  return `
+    <div class="mb-3" style="padding:12px 14px;border-radius:12px;background:${bg};border:1px solid ${border};">
+      <div class="flex-between" style="flex-wrap:wrap;gap:8px;">
+        <div>
+          <span class="badge ${modeBadgeClass}">${esc(creditPolicy.trading_mode_label || (isBlocked ? "Faqat naqd savdo" : "Nasiya ochiq"))}</span>
+          <strong style="margin-left:6px;">${esc(creditPolicy.credit_condition_label || creditPolicy.credit_condition_code)}</strong>
+        </div>
+        ${
+          hasBureauReport
+            ? `<span class="badge badge-navy">🛡 Nazoratchiga xabar yuborilgan</span>`
+            : ""
+        }
+      </div>
+      <div class="text-sm mt-2">${esc(creditPolicy.credit_condition_detail || "")}</div>
+      ${
+        isBlocked && creditPolicy.block_reason
+          ? `<div class="text-xs fw-bold mt-1" style="color:var(--danger-fg, #b91c1c);">⛔ Savdo cheklovi: ${esc(creditPolicy.block_reason)}</div>`
+          : ""
+      }
+    </div>
+  `;
+}
+
+export function renderKatmMibDstiReportHtml(rep, creditPolicy = null) {
   if (!rep) {
-    return `<div class="state-box mt-3">Hali KATM + MIB + DSTI tekshiruvi o‘tkazilmagan. Yuqoridagi forma orqali PINFL va INN kiritib limitni tekshiring.</div>`;
+    return `
+      ${renderCreditPolicyBannerHtml(creditPolicy, false)}
+      <div class="state-box mt-3">Hali KATM + MIB + DSTI tekshiruvi o‘tkazilmagan. Yuqoridagi forma orqali PINFL va INN kiritib limitni tekshiring.</div>
+    `;
   }
   const dstiAfter = Number(rep.dsti_after_pct ?? rep.dsti_before_pct ?? 0);
   const barWidth = Math.min(100, Math.max(2, Math.round(dstiAfter)));
@@ -52,6 +93,7 @@ export function renderKatmMibDstiReportHtml(rep) {
 
   return `
     <div class="card card-elevated mt-3 tabular" style="border-top:4px solid var(--navy-700);">
+      ${renderCreditPolicyBannerHtml(creditPolicy, true)}
       <div class="flex-between mb-3">
         <div>
           <span class="badge badge-navy">${esc(rep.provider_mode)}</span>
