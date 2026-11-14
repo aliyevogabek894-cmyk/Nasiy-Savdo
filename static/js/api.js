@@ -116,12 +116,26 @@ export function statusBadge(status) {
 export function renderProductCard(p) {
   const isCompared = AppState.compareIds.includes(p.id);
   const isWished = AppState.wishlistIds.has(p.id);
+  const inCartQty = (AppState.cartQtyMap && AppState.cartQtyMap[p.id]) || 0;
+  const deliveryChip = p.delivery_badge || (p.delivery_sla_days <= 1 ? "Ertaga bepul" : `${p.delivery_sla_days} kunda bepul`);
+
   const nasiyaHtml = p.indicative_installment
-    ? `<div class="nasiya-callout">
-         <div class="nasiya-monthly tabular">${t("per_month")} ${fmtUzs(p.indicative_installment.monthly_payment)} <span class="text-xs">(${p.indicative_installment.months} oy)</span></div>
-         <div class="text-xs text-secondary tabular">${t("total_payable")}: ${fmtUzs(p.indicative_installment.total_payable)} • ${t("indicative")}</div>
+    ? `<div class="nasiya-pill-uzum tabular">
+         <span>${fmtUzs(p.indicative_installment.monthly_payment)}</span>
+         <span class="text-xs" style="font-weight:600;">/oy • ${p.indicative_installment.months} oy</span>
+       </div>
+       <div class="text-xs text-muted tabular">${t("total_payable")}: ${fmtUzs(p.indicative_installment.total_payable)} (${t("indicative")})</div>`
+    : `<div class="badge badge-warning" style="width:fit-content;">⊘ ${t("no_installment")}</div>`;
+
+  const ctaHtml = inCartQty > 0
+    ? `<div class="card-stepper" data-stepper-wrap="${esc(p.id)}">
+         <button type="button" data-card-dec="${esc(p.id)}" aria-label="Kamaytirish">−</button>
+         <span class="card-stepper-qty">${inCartQty}</span>
+         <button type="button" data-card-inc="${esc(p.id)}" aria-label="Ko‘paytirish" ${inCartQty >= p.stock_available ? "disabled" : ""}>+</button>
        </div>`
-    : `<div class="badge badge-warning">⊘ ${t("no_installment")}</div>`;
+    : `<button class="btn btn-primary btn-sm btn-cart-pill" data-add-cart="${esc(p.id)}" ${p.stock_available <= 0 ? "disabled" : ""}>
+         ${p.stock_available > 0 ? `+ ${t("add_to_cart")}` : t("out_of_stock")}
+       </button>`;
 
   return `
     <article class="product-card" data-product-id="${esc(p.id)}">
@@ -129,29 +143,26 @@ export function renderProductCard(p) {
         <img src="${esc(p.primary_image || "/static/icons/product-default.svg")}" alt="${esc(p.title)}" loading="lazy">
         <div class="product-badges">
           ${p.discount_pct > 0 ? `<span class="badge badge-gold">-${p.discount_pct}%</span>` : ""}
-          ${p.installment_eligible ? `<span class="badge badge-navy">Nasiya ≤ 12 oy</span>` : `<span class="badge badge-warning">Faqat naqd</span>`}
+          ${p.installment_eligible ? `<span class="badge badge-navy">0-0-12</span>` : `<span class="badge badge-warning">Faqat naqd</span>`}
         </div>
         <div class="product-top-actions">
-          <button class="chip-btn ${isWished ? "active" : ""}" data-wishlist-id="${esc(p.id)}" title="Sevimlilar" aria-label="Sevimlilarga qo‘shish">♥</button>
+          <button class="chip-btn ${isWished ? "active" : ""}" data-wishlist-id="${esc(p.id)}" title="Sevimlilar" aria-label="Sevimlilarga qo‘shish">${isWished ? "♥" : "♡"}</button>
           <button class="chip-btn ${isCompared ? "active" : ""}" data-compare-id="${esc(p.id)}" title="Taqqoslash" aria-label="Taqqoslashga qo‘shish">⚖</button>
         </div>
+        <span class="delivery-chip">🚚 ${esc(deliveryChip)}</span>
       </div>
       <div class="product-body">
-        <div class="text-xs text-muted">${esc(p.store_name)} • ★ ${esc(p.rating)} (${esc(p.review_count)})</div>
-        <div class="product-title" data-open-product="${esc(p.slug)}">${esc(p.title)}</div>
         <div class="price-row tabular">
           <span class="cash-price">${fmtUzs(p.cash_price)}</span>
           ${p.old_price ? `<span class="old-price">${fmtUzs(p.old_price)}</span>` : ""}
         </div>
         ${nasiyaHtml}
-        <div class="flex-between mt-2" style="margin-top:auto;">
-          <span class="text-xs ${p.stock_available > 0 ? "text-secondary" : "form-error"}">
-            ${p.stock_available > 0 ? `✓ ${p.stock_available} dona • ${p.delivery_sla_days} kun` : t("out_of_stock")}
-          </span>
-          <button class="btn btn-primary btn-sm" data-add-cart="${esc(p.id)}" ${p.stock_available <= 0 ? "disabled" : ""}>
-            ${t("add_to_cart")}
-          </button>
+        <div class="product-title" data-open-product="${esc(p.slug)}">${esc(p.title)}</div>
+        <div class="text-xs text-muted flex-between">
+          <span>★ ${esc(p.rating)} (${esc(p.review_count)})</span>
+          <span>${esc(p.store_name)}</span>
         </div>
+        <div class="card-cta-slot" data-slot-pid="${esc(p.id)}" data-stock="${p.stock_available}">${ctaHtml}</div>
       </div>
     </article>
   `;
@@ -164,26 +175,70 @@ export function wireProductCardActions(container, reloadCartBadge) {
     });
   });
 
-  container.querySelectorAll("[data-add-cart]").forEach((btn) => {
-    btn.addEventListener("click", async (e) => {
-      e.stopPropagation();
-      if (!AppState.authenticated) {
-        showToast("Savatga qo‘shish uchun avval tizimga kiring (yuqoridagi 'Kirish / Rol' tugmasi).", "error");
-        document.getElementById("btn-role-switcher")?.click();
-        return;
-      }
-      try {
-        await apiFetch("/api/v1/commerce/cart/", {
-          method: "POST",
-          body: JSON.stringify({ product_id: btn.dataset.addCart, quantity: 1 }),
-        });
-        showToast("Mahsulot savatga qo‘shildi!", "success");
-        reloadCartBadge();
-      } catch (err) {
-        showToast(err.message, "error");
-      }
+  const renderSlotStepper = (slot, productId, qty) => {
+    const maxStock = Number(slot.dataset.stock || 99);
+    if (qty > 0) {
+      slot.innerHTML = `
+        <div class="card-stepper" data-stepper-wrap="${esc(productId)}">
+          <button type="button" data-card-dec="${esc(productId)}" aria-label="Kamaytirish">−</button>
+          <span class="card-stepper-qty">${qty}</span>
+          <button type="button" data-card-inc="${esc(productId)}" aria-label="Ko‘paytirish" ${qty >= maxStock ? "disabled" : ""}>+</button>
+        </div>`;
+    } else {
+      slot.innerHTML = `
+        <button class="btn btn-primary btn-sm btn-cart-pill" data-add-cart="${esc(productId)}" ${maxStock <= 0 ? "disabled" : ""}>
+          ${maxStock > 0 ? `+ ${t("add_to_cart")}` : t("out_of_stock")}
+        </button>`;
+    }
+    bindCartSlot(slot);
+  };
+
+  const applyCartDelta = async (productId, delta) => {
+    if (!AppState.authenticated) {
+      showToast("Savatga qo‘shish uchun avval tizimga kiring (yuqoridagi 'Kirish / Rol' tugmasi).", "error");
+      document.getElementById("btn-role-switcher")?.click();
+      return;
+    }
+    try {
+      const cart = await apiFetch("/api/v1/commerce/cart/", {
+        method: "POST",
+        body: JSON.stringify({ product_id: productId, delta }),
+      });
+      const item = (cart.items || []).find((i) => String(i.product_id) === String(productId));
+      const newQty = item ? Number(item.quantity) : 0;
+      if (!AppState.cartQtyMap) AppState.cartQtyMap = {};
+      if (newQty > 0) AppState.cartQtyMap[productId] = newQty;
+      else delete AppState.cartQtyMap[productId];
+      document.querySelectorAll(`.card-cta-slot[data-slot-pid="${productId}"]`).forEach((s) => renderSlotStepper(s, productId, newQty));
+      if (delta > 0 && newQty === 1) showToast("Mahsulot savatga qo‘shildi!", "success");
+      if (reloadCartBadge) reloadCartBadge();
+    } catch (err) {
+      showToast(err.message, "error");
+    }
+  };
+
+  function bindCartSlot(scopeEl) {
+    scopeEl.querySelectorAll("[data-add-cart]").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        applyCartDelta(btn.dataset.addCart, 1);
+      });
     });
-  });
+    scopeEl.querySelectorAll("[data-card-inc]").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        applyCartDelta(btn.dataset.cardInc, 1);
+      });
+    });
+    scopeEl.querySelectorAll("[data-card-dec]").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        applyCartDelta(btn.dataset.cardDec, -1);
+      });
+    });
+  }
+
+  bindCartSlot(container);
 
   container.querySelectorAll("[data-wishlist-id]").forEach((btn) => {
     btn.addEventListener("click", async (e) => {
@@ -200,12 +255,17 @@ export function wireProductCardActions(container, reloadCartBadge) {
         if (res.wishlisted) {
           AppState.wishlistIds.add(btn.dataset.wishlistId);
           btn.classList.add("active");
+          btn.innerHTML = "♥";
           showToast("Sevimlilarga saqlandi.", "success");
         } else {
           AppState.wishlistIds.delete(btn.dataset.wishlistId);
           btn.classList.remove("active");
+          btn.innerHTML = "♡";
           showToast("Sevimlilardan olib tashlandi.");
         }
+        btn.classList.remove("heart-pop");
+        void btn.offsetWidth;
+        btn.classList.add("heart-pop");
       } catch (err) {
         showToast(err.message, "error");
       }

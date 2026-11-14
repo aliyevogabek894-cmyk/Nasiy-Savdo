@@ -52,6 +52,7 @@ from apps.finance.views import (
     ReconciliationAdminView,
     SelectBankOfferView,
     UpcomingPaymentsMonitorView,
+    UzumMerchantWebhookView,
 )
 from apps.governance.views import (
     AuditLogListView,
@@ -199,6 +200,8 @@ urlpatterns = [
     path("api/v1/finance/cards/", PaymentCardsView.as_view()),
     path("api/v1/finance/psp/click/", ClickMerchantWebhookView.as_view()),
     path("api/v1/finance/psp/payme/", PaymeMerchantRpcView.as_view()),
+    path("api/v1/finance/psp/uzum/", UzumMerchantWebhookView.as_view()),
+    path("api/v1/finance/psp/uzum/<str:stage>/", UzumMerchantWebhookView.as_view()),
     path("api/v1/finance/psp/checkout/", PspCheckoutAndSimulatorView.as_view()),
     path("api/v1/finance/due-monitor/", UpcomingPaymentsMonitorView.as_view()),
     path("api/v1/finance/scoring-reports/", AdminScoringReportsView.as_view()),

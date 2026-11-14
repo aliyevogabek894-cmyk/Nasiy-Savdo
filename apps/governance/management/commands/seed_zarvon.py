@@ -247,7 +247,8 @@ class Command(BaseCommand):
 
         # 9. Banners, Promos, Delivery Points
         Banner.objects.create(title="ZARVON Nasiya: 12 oygacha shaffof muddatli to‘lov", subtitle="Yashirin komissiyasiz, BHM×250 chegarasi ichida va istalgan vaqtda 0% jarimasiz muddatidan oldin yopish.", badge_text="2027 STANDARTI • SANDBOX", cta_label="Nasiya mahsulotlari", target_route="#catalog", theme_variant="navy", sort_order=1)
-        Banner.objects.create(title="11.11 Katta Texnika Aksiyasi — 15% gacha chegirma", subtitle="Sovutgich, kir yuvish va QLED televizorlar birinchi qo‘ldan tez yetkazish bilan.", badge_text="KAMPANIYA", cta_label="Chegirmalarni ko‘rish", target_route="#catalog", theme_variant="gold", sort_order=2)
+        Banner.objects.create(title="11.11 Katta Texnika Aksiyasi — 15% gacha chegirma", subtitle="Sovutgich, kir yuvish va QLED televizorlar birinchi qo‘ldan tez yetkazish bilan.", badge_text="KAMPANIYA • HIT", cta_label="Chegirmalarni ko‘rish", target_route="#catalog?sort=popular", theme_variant="gold", sort_order=2)
+        Banner.objects.create(title="1 kunda yetkazib berish • Click, Payme va Uzum Bank", subtitle="Toshkent va hududiy PVR punktlariga bepul yetkazish hamda KATM/MIB orqali tezkor skoring.", badge_text="TEZKOR YETKAZISH", cta_label="Smartfonlar katalogi", target_route="#catalog?category=smartfonlar", theme_variant="navy", sort_order=3)
         PromoCode.objects.create(code="ZARVON11", title="11.11 Aksiyasi 300 000 so‘m chegirma", discount_fixed=300_000, min_order_amount=3_000_000, max_budget_uzs=30_000_000, expires_at=timezone.now() + timedelta(days=45))
         PromoCode.objects.create(code="BARAKA5", title="5% chegirma (max 500 000 so‘m)", discount_pct=5.0, min_order_amount=2_000_000, max_budget_uzs=50_000_000, expires_at=timezone.now() + timedelta(days=60))
 
@@ -554,3 +555,16 @@ class Command(BaseCommand):
                     sent_by=coll_agent,
                     status="SENT",
                 )
+
+        if Banner.objects.count() < 3:
+            Banner.objects.get_or_create(
+                title="1 kunda yetkazib berish • Click, Payme va Uzum Bank",
+                defaults={
+                    "subtitle": "Toshkent va hududiy PVR punktlariga bepul yetkazish hamda KATM/MIB orqali tezkor skoring.",
+                    "badge_text": "TEZKOR YETKAZISH",
+                    "cta_label": "Smartfonlar katalogi",
+                    "target_route": "#catalog?category=smartfonlar",
+                    "theme_variant": "navy",
+                    "sort_order": 3,
+                },
+            )

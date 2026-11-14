@@ -141,9 +141,9 @@ export async function renderCheckoutView(container, reloadCartBadge) {
   }
 
   let step = 1;
-  let deliveryType = "COURIER";
+  let deliveryType = AppState.deliveryPoint?.id ? "PICKUP" : "COURIER";
   let deliveryAddress = "Toshkent sh., Chilonzor tumani, 5-mavze";
-  let deliveryPointId = dps.results[0]?.id || "";
+  let deliveryPointId = AppState.deliveryPoint?.id || dps.results[0]?.id || "";
   let paymentChannel = cart.installment_eligible ? "ZARVON_NASIYA" : "DIRECT_PAY";
   let pspProvider = "Payme";
   let months = 12;
@@ -506,10 +506,15 @@ export async function renderCheckoutView(container, reloadCartBadge) {
               paymentChannel === "DIRECT_PAY"
                 ? `<div class="card mt-3" style="text-align:left;background:var(--bg-subtle);">
                      <div class="flex-between">
-                       <strong>⚡ ${esc(pspProvider)} Gateway Sandbox Protokoli (${fmtUzs(cart.total_amount)})</strong>
-                       <button id="chk-run-psp-sim" class="btn btn-gold btn-sm">Click / Payme Protokolini Sinash</button>
+                       <strong>⚡ ${esc(pspProvider)} Gateway Sandbox Protokoli (${fmtUzs(res.total_amount || netTotal)})</strong>
+                       <button id="chk-run-psp-sim" class="btn btn-gold btn-sm">Click / Payme / Uzum Protokolini Sinash</button>
                      </div>
-                     <div id="chk-psp-trace" class="text-xs mt-2 text-muted">Buyurtma rasmiylashtirildi. Istasangiz yuqoridagi tugma bilan to‘lov shlyuzining Prepare/Complete yoki JSON-RPC 2.0 izini tekshiring.</div>
+                     ${
+                       res.finance?.psp_checkout?.checkout_url
+                         ? `<div class="mt-2"><a href="${esc(res.finance.psp_checkout.checkout_url)}" target="_blank" rel="noopener" class="btn btn-outline btn-sm">🔗 ${esc(pspProvider)} to‘lov havolasini ochish</a></div>`
+                         : ""
+                     }
+                     <div id="chk-psp-trace" class="text-xs mt-2 text-muted">Buyurtma rasmiylashtirildi. Yuqoridagi tugma bilan to‘lov shlyuzining real Prepare/Complete, JSON-RPC 2.0 yoki Uzum /check→/create→/confirm izini tekshiring.</div>
                    </div>`
                 : ""
             }
@@ -525,7 +530,7 @@ export async function renderCheckoutView(container, reloadCartBadge) {
           try {
             const sim = await apiFetch("/api/v1/finance/psp/checkout/", {
               method: "POST",
-              body: JSON.stringify({ reference: res.order_number, psp_provider: pspProvider, amount_uzs: cart.total_amount }),
+              body: JSON.stringify({ reference: res.order_number, psp_provider: pspProvider, amount_uzs: res.total_amount || netTotal }),
             });
             document.getElementById("chk-psp-trace").innerHTML = `
               <span class="badge badge-success">✓ ${esc(sim.psp_provider)} — ${esc(sim.mode)}</span>

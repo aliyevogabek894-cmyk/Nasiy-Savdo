@@ -33,14 +33,27 @@ async function refreshCartBadge() {
   const badge = document.getElementById("cart-count");
   if (!badge) return;
   if (!AppState.authenticated) {
+    AppState.cartQtyMap = {};
     badge.textContent = "0";
     return;
   }
   try {
     const cart = await apiFetch("/api/v1/commerce/cart/");
-    const count = cart.items.reduce((acc, it) => acc + it.quantity, 0);
+    const qtyMap = {};
+    let count = 0;
+    (cart.items || []).forEach((it) => {
+      qtyMap[String(it.product_id)] = Number(it.quantity || 0);
+      count += Number(it.quantity || 0);
+    });
+    const prevCount = AppState.cartCount || 0;
+    AppState.cartQtyMap = qtyMap;
     AppState.cartCount = count;
     badge.textContent = String(count);
+    if (count !== prevCount) {
+      badge.classList.remove("badge-pop");
+      void badge.offsetWidth;
+      badge.classList.add("badge-pop");
+    }
   } catch {
     badge.textContent = "0";
   }
@@ -375,3 +388,70 @@ async function init() {
 }
 
 init();
+
+
+/* --- ZARVON Pickup Point Selector & Tactile Shell Enhancements --- */
+function setupUzumShellInteractions() {
+  const labelEl = document.getElementById("header-dp-label");
+  if (labelEl && AppState.deliveryPoint?.name) {
+    labelEl.textContent = `${AppState.deliveryPoint.region} • ${AppState.deliveryPoint.name}`;
+  }
+
+  const dpBtn = document.getElementById("btn-delivery-point");
+  if (dpBtn && !dpBtn.dataset.wired) {
+    dpBtn.dataset.wired = "1";
+    dpBtn.addEventListener("click", async () => {
+      try {
+        const res = await apiFetch("/api/v1/commerce/delivery-points/");
+        const list = res.results || [];
+        openModal(
+          "Yetkazib berish shahri va topshirish punkti (PVR)",
+          `
+            <p class="text-sm text-secondary mb-3">Tanlangan punkt kassada (Checkout) avtomatik taklif qilinadi.</p>
+            <div style="display:flex;flex-direction:column;gap:8px;">
+              ${list
+                .map(
+                  (d) => `
+                <button type="button" class="cat-drawer-item" data-pick-dp="${esc(d.id)}" data-dp-name="${esc(d.name)}" data-dp-reg="${esc(d.region)}">
+                  <div style="text-align:left;">
+                    <div class="fw-bold">📍 ${esc(d.name)}</div>
+                    <div class="text-xs text-muted">${esc(d.region)} • ${esc(d.address)} (${esc(d.working_hours)})</div>
+                  </div>
+                  <span class="badge ${AppState.deliveryPoint?.id === d.id ? "badge-gold" : "badge-navy"}">${AppState.deliveryPoint?.id === d.id ? "Tanlangan" : "Tanlash"}</span>
+                </button>`
+                )
+                .join("")}
+            </div>
+          `
+        );
+        document.querySelectorAll("[data-pick-dp]").forEach((b) => {
+          b.addEventListener("click", () => {
+            const chosen = { id: b.dataset.pickDp, name: b.dataset.dpName, region: b.dataset.dpReg };
+            AppState.deliveryPoint = chosen;
+            localStorage.setItem("zarvon_dp", JSON.stringify(chosen));
+            if (labelEl) labelEl.textContent = `${chosen.region} • ${chosen.name}`;
+            closeModal();
+            showToast(`Topshirish punkti tanlandi: ${chosen.name}`, "success");
+          });
+        });
+      } catch (err) {
+        showToast(err.message, "error");
+      }
+    });
+  }
+
+  const applyViewMotion = () => {
+    const viewRoot = document.getElementById("app-view");
+    if (!viewRoot) return;
+    viewRoot.classList.remove("view-enter");
+    void viewRoot.offsetWidth;
+    viewRoot.classList.add("view-enter");
+  };
+  window.addEventListener("hashchange", applyViewMotion);
+}
+
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", setupUzumShellInteractions);
+} else {
+  setupUzumShellInteractions();
+}

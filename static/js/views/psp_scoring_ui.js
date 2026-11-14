@@ -337,7 +337,10 @@ export function openPspPayModal({ reference, contractId = null, suggestedAmount,
           body: JSON.stringify({ reference, psp_provider: selectedPsp, amount_uzs: amt, card_id: chosenCard }),
         });
         msg = res.detail;
-        traceHtml = `<pre class="text-xs" style="background:var(--bg-subtle);padding:8px;border-radius:8px;overflow:auto;max-height:160px;">${esc(JSON.stringify(res.trace, null, 2))}</pre>`;
+        const linkBtn = res.checkout_url
+          ? `<div class="mt-2 mb-2"><a href="${esc(res.checkout_url)}" target="_blank" rel="noopener" class="btn btn-outline btn-sm">🔗 ${esc(selectedPsp)} Checkout havolasini ochish</a></div>`
+          : "";
+        traceHtml = `${linkBtn}<pre class="text-xs" style="background:var(--bg-subtle);padding:8px;border-radius:8px;overflow:auto;max-height:160px;">${esc(JSON.stringify(res.trace, null, 2))}</pre>`;
       }
       document.getElementById("psp-modal-trace").innerHTML = `<span class="badge badge-success mb-1">✓ ${esc(msg)}</span>${traceHtml}`;
       showToast(msg, "success");
@@ -353,7 +356,7 @@ export function openPspPayModal({ reference, contractId = null, suggestedAmount,
 }
 
 export async function enhanceHomeWithUzumSections(mainContainer) {
-  const hero = mainContainer.querySelector(".hero-grid");
+  const hero = mainContainer.querySelector(".hero-carousel-grid, .hero-grid");
   if (!hero || mainContainer.querySelector("#uzum-how-strip")) return;
 
   const strip = document.createElement("section");

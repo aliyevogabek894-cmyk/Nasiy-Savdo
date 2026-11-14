@@ -530,3 +530,145 @@ class ZarvonMasterSpecificationTests(TestCase):
         self.assertEqual(dm_post.status_code, 200)
         self.assertEqual(dm_post.json()["sent_count"], 1)
         self.assertTrue(PaymentReminderLog.objects.filter(schedule_item=due_item, channel="SMS").exists())
+
+
+# --- Added Verification Tests: Uzum Bank Merchant API, PSP URLs, Cart Stepper & Banners ---
+import base64 as _test_base64
+from django.core.management import call_command as _test_call_command
+from django.test import TestCase as _DjangoTestCase
+from django.conf import settings as _test_settings
+from rest_framework.test import APIClient as _TestAPIClient
+from apps.accounts.models import User as _TestUser
+from apps.catalog.models import Product as _TestProduct, ProductStatus as _TestProductStatus
+from apps.finance.models import PspTransaction as _TestPspTransaction
+from apps.finance.psp import build_psp_checkout_payload as _build_psp_checkout_payload
+from apps.governance.models import SecurityEvent as _TestSecurityEvent
+
+
+class UzumPspAndMarketplaceFlowTests(_DjangoTestCase):
+    @classmethod
+    def setUpTestData(cls):
+        _test_call_command("seed_zarvon")
+
+    def setUp(self):
+        self.client = _TestAPIClient()
+        self.customer = _TestUser.objects.get(phone="+998901110001")
+        self.client.force_authenticate(user=self.customer)
+        self.product = _TestProduct.objects.filter(installment_eligible=True, status=_TestProductStatus.APPROVED).first()
+
+    def test_uzum_merchant_api_auth_and_three_stage_settlement(self):
+        # 1. Create a DIRECT_PAY order via CheckoutView
+        chk = self.client.post(
+            "/api/v1/commerce/checkout/",
+            {
+                "idempotency_key": f"uzm-chk-{self.product.id}",
+                "delivery_type": "COURIER",
+                "delivery_address": "Toshkent, Chilonzor 5",
+                "payment_channel": "DIRECT_PAY",
+                "psp_provider": "Uzum Bank",
+                "items": [{"product_id": str(self.product.id), "quantity": 1}],
+            },
+            format="json",
+        )
+        self.assertEqual(chk.status_code, 201, chk.content)
+        order_num = chk.data["order_number"]
+        total_uzs = int(chk.data["total_amount"])
+        self.assertEqual(total_uzs, self.product.cash_price)
+        self.assertIn("psp_checkout", chk.data["finance"])
+        self.assertIn("apelsin.uz", chk.data["finance"]["psp_checkout"]["checkout_url"])
+
+        # 2. Invalid Basic Auth must return 401 and log a HIGH SecurityEvent
+        bad_res = self.client.post(
+            "/api/v1/finance/psp/uzum/check/",
+            {"serviceId": _test_settings.UZUM_SERVICE_ID, "params": {"orderId": order_num}},
+            format="json",
+            HTTP_AUTHORIZATION="Basic d3Jvbmc6d3Jvbmc=",
+        )
+        self.assertEqual(bad_res.status_code, 401)
+        self.assertEqual(bad_res.data["errorCode"], "10001")
+        self.assertTrue(_TestSecurityEvent.objects.filter(event_type="PSP_UZUM_AUTH_FAILED").exists())
+
+        # 3. Valid Basic Auth: /check -> /create -> /confirm -> /status
+        creds = f"{_test_settings.UZUM_SERVICE_ID}:{_test_settings.UZUM_SECRET_KEY}"
+        auth_hdr = "Basic " + _test_base64.b64encode(creds.encode("utf-8")).decode("ascii")
+        tiyin = total_uzs * 100
+        tx_id = "uzm-test-0001"
+
+        r_check = self.client.post(
+            "/api/v1/finance/psp/uzum/check/",
+            {"serviceId": _test_settings.UZUM_SERVICE_ID, "params": {"orderId": order_num}},
+            format="json",
+            HTTP_AUTHORIZATION=auth_hdr,
+        )
+        self.assertEqual(r_check.status_code, 200)
+        self.assertEqual(r_check.data["status"], "OK")
+        self.assertEqual(r_check.data["data"]["expected_amount_tiyin"], tiyin)
+
+        r_create = self.client.post(
+            "/api/v1/finance/psp/uzum/create/",
+            {"serviceId": _test_settings.UZUM_SERVICE_ID, "transId": tx_id, "amount": tiyin, "params": {"orderId": order_num}},
+            format="json",
+            HTTP_AUTHORIZATION=auth_hdr,
+        )
+        self.assertEqual(r_create.status_code, 200)
+        self.assertEqual(r_create.data["status"], "CREATED")
+
+        r_confirm = self.client.post(
+            "/api/v1/finance/psp/uzum/confirm/",
+            {"serviceId": _test_settings.UZUM_SERVICE_ID, "transId": tx_id},
+            format="json",
+            HTTP_AUTHORIZATION=auth_hdr,
+        )
+        self.assertEqual(r_confirm.status_code, 200)
+        self.assertEqual(r_confirm.data["status"], "CONFIRMED")
+
+        tx_obj = _TestPspTransaction.objects.get(external_trans_id=tx_id)
+        self.assertEqual(tx_obj.state_code, 2)
+        self.assertEqual(tx_obj.action_stage, "PERFORMED")
+        self.assertEqual(tx_obj.amount_tiyin, tiyin)
+
+        # 4. PspCheckoutAndSimulatorView executes 3-step Uzum Bank protocol & returns links
+        sim = self.client.post(
+            "/api/v1/finance/psp/checkout/",
+            {"reference": order_num, "psp_provider": "Uzum Bank", "amount_uzs": total_uzs},
+            format="json",
+        )
+        self.assertEqual(sim.status_code, 200)
+        self.assertEqual(len(sim.data["trace"]), 3)
+        self.assertIn("checkout_url", sim.data)
+        self.assertIn("payme", sim.data["links"])
+        self.assertIn("click", sim.data["links"])
+
+    def test_psp_checkout_payload_urls(self):
+        payme = _build_psp_checkout_payload(psp_provider="Payme", reference="ZRV-999", amount_uzs=150000)
+        self.assertIn("paycom.uz/", payme["checkout_url"])
+        self.assertEqual(payme["amount_tiyin"], 15000000)
+
+        click = _build_psp_checkout_payload(psp_provider="Click", reference="ZRV-999", amount_uzs=150000)
+        self.assertIn("my.click.uz/services/pay", click["checkout_url"])
+        self.assertIn("transaction_param=ZRV-999", click["checkout_url"])
+
+    def test_cart_inline_stepper_delta_and_home_ux_payload(self):
+        # Clear cart then increment twice and decrement twice -> deleted at 0
+        self.client.delete("/api/v1/commerce/cart/")
+        r1 = self.client.post("/api/v1/commerce/cart/", {"product_id": str(self.product.id), "delta": 1}, format="json")
+        self.assertEqual(r1.status_code, 200)
+        self.assertEqual(r1.data["items"][0]["quantity"], 1)
+
+        r2 = self.client.post("/api/v1/commerce/cart/", {"product_id": str(self.product.id), "delta": 1}, format="json")
+        self.assertEqual(r2.status_code, 200)
+        self.assertEqual(r2.data["items"][0]["quantity"], 2)
+
+        r3 = self.client.post("/api/v1/commerce/cart/", {"product_id": str(self.product.id), "delta": -1}, format="json")
+        self.assertEqual(r3.status_code, 200)
+        self.assertEqual(r3.data["items"][0]["quantity"], 1)
+
+        r4 = self.client.post("/api/v1/commerce/cart/", {"product_id": str(self.product.id), "delta": -1}, format="json")
+        self.assertEqual(r4.status_code, 200)
+        self.assertEqual(len(r4.data["items"]), 0)
+
+        # Home payload includes >= 3 carousel banners and delivery_badge on cards
+        home = self.client.get("/api/v1/catalog/home/")
+        self.assertEqual(home.status_code, 200)
+        self.assertGreaterEqual(len(home.data["banners"]), 3)
+        self.assertTrue(all("delivery_badge" in p for p in home.data["new_arrivals"]))

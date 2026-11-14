@@ -1030,3 +1030,516 @@ table.data-table {
   border-color: var(--navy-500);
   color: var(--info-fg);
 }
+
+
+/* ==========================================================================
+   ZARVON x Uzum-Structure Tactile UI & Micro-Interactions ("Emotsiyalar")
+   Original Navy (#17365D) + Gold (#C9A227) Marketplace Identity
+   ========================================================================== */
+
+@keyframes heartPop {
+  0% { transform: scale(1); }
+  30% { transform: scale(1.38) rotate(-8deg); }
+  60% { transform: scale(0.92) rotate(4deg); }
+  100% { transform: scale(1); }
+}
+
+@keyframes ringBurst {
+  0% { transform: scale(0.5); opacity: 0.9; }
+  100% { transform: scale(1.85); opacity: 0; }
+}
+
+@keyframes badgePop {
+  0% { transform: scale(1); }
+  40% { transform: scale(1.36); }
+  75% { transform: scale(0.92); }
+  100% { transform: scale(1); }
+}
+
+@keyframes fadeSlideUp {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.view-enter {
+  animation: fadeSlideUp 0.24s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.badge-pop {
+  animation: badgePop 0.36s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* Header Utility Strip & Pickup Selector */
+.header-dp-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+}
+
+.delivery-top-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-subtle);
+  color: var(--text-primary);
+  font-size: 0.76rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform 0.14s ease, border-color 0.14s ease, background 0.14s ease;
+}
+
+.delivery-top-pill:hover {
+  border-color: var(--gold-500);
+  background: var(--gold-100);
+  transform: translateY(-1px);
+}
+
+/* Katalog Popover Drawer */
+.cat-drawer-panel {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.cat-drawer-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  text-decoration: none;
+  font-weight: 600;
+  font-size: 0.9rem;
+  transition: transform 0.14s ease, border-color 0.14s ease, box-shadow 0.14s ease;
+}
+
+.cat-drawer-item:hover {
+  border-color: var(--navy-700);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(23, 54, 93, 0.08);
+}
+
+/* Horizontal Category Icon Pill Bar (Uzum-style quick filters) */
+.cat-pill-bar {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  padding: 4px 2px 12px;
+  margin-bottom: 18px;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+.cat-pill-bar::-webkit-scrollbar {
+  display: none;
+}
+
+.cat-pill {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 15px;
+  border-radius: 999px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: transform 0.16s cubic-bezier(0.34, 1.56, 0.64, 1), border-color 0.16s ease, background 0.16s ease, box-shadow 0.16s ease;
+}
+
+.cat-pill:hover {
+  transform: translateY(-2px);
+  border-color: var(--navy-600, var(--navy-700));
+  box-shadow: 0 6px 14px rgba(23, 54, 93, 0.09);
+}
+
+.cat-pill.active {
+  background: var(--navy-800);
+  color: #ffffff;
+  border-color: var(--navy-800);
+}
+
+.cat-pill-dot-cash {
+  font-size: 0.7rem;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: var(--warning-bg);
+  color: var(--warning-fg);
+}
+
+/* Interactive Hero Carousel + Right Quick-Check Card */
+.hero-carousel-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 2.25fr) minmax(260px, 0.95fr);
+  gap: 16px;
+  margin-bottom: 20px;
+  align-items: stretch;
+}
+
+.hero-carousel {
+  position: relative;
+  overflow: hidden;
+  border-radius: 18px;
+  min-height: 290px;
+  background: var(--navy-900);
+  box-shadow: 0 12px 30px rgba(15, 38, 66, 0.14);
+}
+
+.hero-track {
+  display: flex;
+  height: 100%;
+  transition: transform 0.5s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.hero-slide {
+  flex: 0 0 100%;
+  min-width: 100%;
+  padding: 34px 48px 46px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  position: relative;
+  color: #ffffff;
+  background: radial-gradient(circle at 88% 20%, rgba(201, 162, 39, 0.28), transparent 46%),
+              linear-gradient(125deg, #0f2744 0%, #17365d 56%, #234d82 100%);
+}
+
+.hero-slide.gold-variant {
+  color: #10243d;
+  background: radial-gradient(circle at 86% 24%, rgba(255, 255, 255, 0.45), transparent 44%),
+              linear-gradient(125deg, #f5e6b0 0%, #e4c158 55%, #c9a227 100%);
+}
+
+.hero-slide h1,
+.hero-slide h2 {
+  font-size: clamp(1.35rem, 2.2vw, 2.05rem);
+  line-height: 1.18;
+  margin: 10px 0 10px;
+  max-width: 560px;
+  color: inherit;
+}
+
+.hero-slide p {
+  max-width: 520px;
+  opacity: 0.92;
+  margin: 0 0 18px;
+  font-size: 0.95rem;
+}
+
+.hero-nav-btn {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  background: rgba(15, 39, 68, 0.45);
+  backdrop-filter: blur(8px);
+  color: #ffffff;
+  font-size: 1.25rem;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 4;
+  transition: background 0.16s ease, transform 0.16s ease;
+}
+
+.hero-nav-btn:hover {
+  background: rgba(15, 39, 68, 0.85);
+  transform: translateY(-50%) scale(1.08);
+}
+
+.hero-nav-prev { left: 12px; }
+.hero-nav-next { right: 12px; }
+
+.hero-dots {
+  position: absolute;
+  left: 50%;
+  bottom: 14px;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 8px;
+  z-index: 4;
+}
+
+.hero-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  border: none;
+  padding: 0;
+  background: rgba(255, 255, 255, 0.45);
+  cursor: pointer;
+  transition: width 0.25s ease, background 0.2s ease;
+}
+
+.hero-dot.active {
+  width: 26px;
+  background: #ffffff;
+}
+
+.hero-side-card {
+  border-radius: 18px;
+  padding: 20px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-surface);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 12px;
+  box-shadow: 0 8px 22px rgba(15, 38, 66, 0.06);
+}
+
+.quick-search-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.quick-chip-link {
+  font-size: 0.76rem;
+  font-weight: 600;
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: var(--bg-subtle);
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+  text-decoration: none;
+  transition: background 0.14s ease, border-color 0.14s ease;
+}
+
+.quick-chip-link:hover {
+  background: var(--gold-100);
+  border-color: var(--gold-500);
+}
+
+/* Dense Responsive 5-Column Catalog Grid & Snap Horizontal Scroller */
+.uzum-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+@media (min-width: 640px) {
+  .uzum-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+}
+
+@media (min-width: 960px) {
+  .uzum-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
+}
+
+@media (min-width: 1240px) {
+  .uzum-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 16px; }
+}
+
+.h-scroll-snap {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(215px, 240px);
+  gap: 14px;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  padding: 4px 2px 12px;
+  scrollbar-width: thin;
+}
+
+.h-scroll-snap > .product-card {
+  scroll-snap-align: start;
+}
+
+/* Upgraded Uzum-Inspired Tactile Product Card (ZARVON Navy/Gold) */
+.product-card {
+  border-radius: 14px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  transition: transform 0.2s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.2s ease, border-color 0.2s ease;
+}
+
+.product-card:hover {
+  transform: translateY(-4px);
+  border-color: rgba(201, 162, 39, 0.55);
+  box-shadow: 0 14px 28px rgba(15, 38, 66, 0.1);
+}
+
+.product-card .product-media {
+  position: relative;
+  aspect-ratio: 4 / 3;
+  background: var(--bg-subtle);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.product-card .product-media img {
+  max-width: 82%;
+  max-height: 82%;
+  object-fit: contain;
+  transition: transform 0.34s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.product-card:hover .product-media img {
+  transform: scale(1.07);
+}
+
+.product-card .chip-btn {
+  position: relative;
+  transition: transform 0.16s ease, background 0.16s ease, color 0.16s ease;
+}
+
+.product-card .chip-btn.active {
+  color: #dc2626;
+  background: rgba(255, 255, 255, 0.96);
+  border-color: rgba(220, 38, 38, 0.35);
+}
+
+.product-card .chip-btn.heart-pop {
+  animation: heartPop 0.42s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.product-card .chip-btn.heart-pop::after {
+  content: "";
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  border: 2px solid #dc2626;
+  pointer-events: none;
+  animation: ringBurst 0.45s ease-out forwards;
+}
+
+.delivery-chip {
+  position: absolute;
+  left: 10px;
+  bottom: 8px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(23, 54, 93, 0.88);
+  color: #ffffff;
+  backdrop-filter: blur(4px);
+}
+
+.product-card .product-body {
+  padding: 11px 12px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+}
+
+.product-card .product-title {
+  font-size: 0.88rem;
+  font-weight: 600;
+  line-height: 1.32;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  min-height: 2.34em;
+  cursor: pointer;
+}
+
+.nasiya-pill-uzum {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  width: fit-content;
+  max-width: 100%;
+  padding: 4px 8px;
+  border-radius: 7px;
+  background: var(--gold-100);
+  border: 1px solid rgba(201, 162, 39, 0.55);
+  color: var(--navy-900);
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+
+[data-theme="dark"] .nasiya-pill-uzum {
+  background: rgba(201, 162, 39, 0.18);
+  color: #fde68a;
+}
+
+/* Inline Morphing Cart Stepper (- N +) */
+.card-cta-slot {
+  margin-top: auto;
+  padding-top: 6px;
+}
+
+.btn-cart-pill {
+  width: 100%;
+  justify-content: center;
+  border-radius: 10px;
+  padding: 8px 10px;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.card-stepper {
+  display: grid;
+  grid-template-columns: 34px 1fr 34px;
+  align-items: center;
+  border-radius: 10px;
+  border: 1.5px solid var(--navy-700);
+  background: var(--bg-subtle);
+  overflow: hidden;
+  height: 36px;
+}
+
+.card-stepper button {
+  height: 100%;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 1.05rem;
+  font-weight: 800;
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+
+.card-stepper button:hover {
+  background: var(--gold-100);
+  color: var(--navy-900);
+}
+
+.card-stepper-qty {
+  text-align: center;
+  font-weight: 800;
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 900px) {
+  .hero-carousel-grid {
+    grid-template-columns: 1fr;
+  }
+  .hero-slide {
+    padding: 24px 20px 42px;
+  }
+  .hero-carousel {
+    min-height: 240px;
+  }
+}

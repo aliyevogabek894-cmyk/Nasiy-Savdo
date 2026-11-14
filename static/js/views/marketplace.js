@@ -2,120 +2,142 @@
 import { apiFetch, esc, fmtDate, fmtUzs, renderProductCard, showToast, wireProductCardActions } from "../api.js";
 import { AppState } from "../i18n.js";
 
+const CAT_ICONS = {
+  smartfonlar: "📱",
+  noutbuklar: "💻",
+  televizorlar: "📺",
+  sovutgichlar: "🧊",
+  "kir-yuvish": "🧺",
+  mebel: "🛋",
+  "kochmas-mulk": "🏠",
+};
+
 export async function renderHomeView(container, reloadCartBadge) {
   const data = await apiFetch("/api/v1/catalog/home/");
-  const b0 = data.banners[0] || {
-    title: "ZARVON Nasiya: 12 oygacha shaffof muddatli to‘lov",
-    subtitle: "Yashirin komissiyasiz, 250 BHM chegarasi ichida.",
-    badge_text: "SANDBOX DEMO",
-    cta_label: "Katalogga o‘tish",
-  };
-  const b1 = data.banners[1] || {
-    title: "11.11 Aksiyasi",
-    subtitle: "Chegirmadagi texnikalar",
-    badge_text: "KAMPANIYA",
-  };
+  const banners = data.banners && data.banners.length
+    ? data.banners
+    : [
+        {
+          badge_text: "SANDBOX DEMO",
+          title: "ZARVON Nasiya: 12 oygacha shaffof muddatli to‘lov",
+          subtitle: "Yashirin komissiyasiz, 250 BHM chegarasi ichida va istalgan vaqtda 0% jarimasiz yopish.",
+          cta_label: "Katalogga o‘tish",
+          target_route: "#catalog",
+          theme_variant: "navy",
+        },
+      ];
 
   container.innerHTML = `
-    <section class="hero-grid" aria-label="Kampaniya bannerlari">
-      <div class="hero-card">
-        <span class="hero-badge">${esc(b0.badge_text)}</span>
-        <h1>${esc(b0.title)}</h1>
-        <p style="max-width:600px;opacity:0.92;">${esc(b0.subtitle)}</p>
-        <div class="flex-gap mt-4">
-          <a href="#catalog" class="btn btn-gold">${esc(b0.cta_label || "Katalogni ochish")} →</a>
-          <a href="#calculator" class="btn btn-outline" style="background:rgba(255,255,255,0.12);color:#fff;border-color:rgba(255,255,255,0.35);">
-            Nasiya kalkulyatori
-          </a>
+    <nav class="cat-pill-bar" aria-label="Tezkor kategoriyalar">
+      <a href="#catalog" class="cat-pill active">✨ Barcha tovarlar</a>
+      ${data.categories
+        .map(
+          (c) => `
+        <a href="#catalog?category=${esc(c.slug)}" class="cat-pill" data-cat-slug="${esc(c.slug)}">
+          <span>${CAT_ICONS[c.slug] || "🛍"}</span>
+          <span>${esc(c.name)}</span>
+          ${!c.installment_allowed ? `<span class="cat-pill-dot-cash">Faqat naqd</span>` : ""}
+        </a>`
+        )
+        .join("")}
+    </nav>
+
+    <section class="hero-carousel-grid" aria-label="Kampaniya bannerlari">
+      <div class="hero-carousel" id="hero-carousel">
+        <div class="hero-track" id="hero-track">
+          ${banners
+            .map(
+              (b) => `
+            <div class="hero-slide ${b.theme_variant === "gold" ? "gold-variant" : ""}">
+              <span class="hero-badge" style="width:fit-content;">${esc(b.badge_text)}</span>
+              <h1>${esc(b.title)}</h1>
+              <p>${esc(b.subtitle)}</p>
+              <div class="flex-gap">
+                <a href="${esc(b.target_route || "#catalog")}" class="btn ${b.theme_variant === "gold" ? "btn-primary" : "btn-gold"}">${esc(b.cta_label || "Katalogni ochish")} →</a>
+                <a href="#calculator" class="btn btn-outline" style="${b.theme_variant === "gold" ? "" : "background:rgba(255,255,255,0.12);color:#fff;border-color:rgba(255,255,255,0.38);"}">
+                  Nasiya kalkulyatori
+                </a>
+              </div>
+              <div class="flex-gap mt-4 text-xs" style="opacity:0.9;">
+                <span>✓ Muddat ≤ ${data.compliance.max_months} oy</span>
+                <span>✓ Maksimal xarid: ${fmtUzs(data.compliance.max_bhm_limit)} (250 BHM)</span>
+                <span>✓ Erta to‘lov: 0% jarima</span>
+              </div>
+            </div>`
+            )
+            .join("")}
         </div>
-        <div class="flex-gap mt-4 text-xs" style="opacity:0.88;">
-          <span>✓ Muddat ≤ ${data.compliance.max_months} oy</span>
-          <span>✓ Maksimal xarid: ${fmtUzs(data.compliance.max_bhm_limit)} (250 BHM)</span>
-          <span>✓ Erta to‘lov: 0% jarima</span>
-        </div>
+        ${
+          banners.length > 1
+            ? `
+          <button type="button" class="hero-nav-btn hero-nav-prev" id="hero-prev" aria-label="Oldingi slayd">‹</button>
+          <button type="button" class="hero-nav-btn hero-nav-next" id="hero-next" aria-label="Keyingi slayd">›</button>
+          <div class="hero-dots" id="hero-dots">
+            ${banners.map((_, idx) => `<button type="button" class="hero-dot ${idx === 0 ? "active" : ""}" data-hero-dot="${idx}" aria-label="${idx + 1}-slayd"></button>`).join("")}
+          </div>`
+            : ""
+        }
       </div>
 
-      <div class="hero-card-gold flex" style="flex-direction:column;justify-content:space-between;">
+      <aside class="hero-side-card">
         <div>
-          <span class="badge badge-navy">${esc(b1.badge_text)}</span>
-          <h2 class="mt-2">${esc(b1.title)}</h2>
-          <p class="text-sm">${esc(b1.subtitle)}</p>
+          <span class="badge badge-navy">1 DAQIQADA SKORING</span>
+          <h3 class="mt-2" style="margin-bottom:6px;">KATM + MIB + 50% DSTI limitini tekshiring</h3>
+          <p class="text-xs text-secondary" style="margin:0 0 12px;">
+            Boshqa bank/nasiya kreditlaringiz, MIB ijro holati va xavfsiz oylik to‘lov yukingiz bir zumda hisoblanadi.
+          </p>
+          <a href="#customer/kyc" class="btn btn-gold btn-sm" style="width:100%;justify-content:center;">⚡ Limitni hozir bilish →</a>
         </div>
-        <div class="mt-3">
-          <div class="text-xs fw-bold mb-2">Ommabop qidiruvlar:</div>
-          <div class="flex-gap">
-            ${data.popular_queries
-              .map((q) => `<button class="btn btn-outline btn-sm" data-quick-search="${esc(q)}">${esc(q)}</button>`)
+        <div>
+          <div class="text-xs fw-bold text-muted mb-2">Ommabop qidiruvlar:</div>
+          <div class="quick-search-chips">
+            ${(data.popular_queries || [])
+              .map((q) => `<button type="button" class="quick-chip-link" data-quick-search="${esc(q)}">${esc(q)}</button>`)
               .join("")}
           </div>
         </div>
-      </div>
+      </aside>
     </section>
 
-    <!-- Categories -->
-    <section class="mt-6">
-      <div class="flex-between mb-3">
-        <h2>Kategoriyalar</h2>
-        <a href="#catalog" class="text-sm fw-bold">Barchasi →</a>
-      </div>
-      <div class="cat-strip">
-        ${data.categories
-          .map(
-            (c) => `
-          <div class="cat-tile ${c.installment_allowed ? "" : "prohibited"}" data-cat-slug="${esc(c.slug)}">
-            <div class="flex-between">
-              <strong class="text-sm">${esc(c.name)}</strong>
-              ${
-                c.installment_allowed
-                  ? `<span class="badge badge-success">Nasiya</span>`
-                  : `<span class="badge badge-danger">Taqiqlangan</span>`
-              }
-            </div>
-            <span class="text-xs text-muted">${
-              c.installment_allowed ? "3–12 oy muddatli to‘lov" : esc(c.prohibition_note || "Faqat naqd")
-            }</span>
-          </div>`
-          )
-          .join("")}
-      </div>
-    </section>
-
-    <!-- "Oyiga ... so'mdan" Curated Picks -->
-    <section class="mt-6">
-      <div class="flex-between mb-3">
-        <div>
-          <h2>“Oyiga … so‘mdan” — Shaffof nasiya tanlovi</h2>
-          <p class="text-sm text-muted" style="margin:0;">Har bir kartada muddat, jami to‘lov summasi va indikativ belgi ochiq ko‘rsatiladi (28.3).</p>
-        </div>
-        <a href="#catalog?installment_only=true" class="btn btn-outline btn-sm">Barcha nasiya tovarlari</a>
-      </div>
-      <div class="grid-4">
-        ${data.installment_picks.map(renderProductCard).join("")}
-      </div>
-    </section>
-
-    <!-- Discounts -->
+    <!-- Chegirmalar Horizontal Snap Showcase -->
     ${
       data.discounts.length
         ? `<section class="mt-6">
              <div class="flex-between mb-3">
-               <h2>Chegirmalar va kampaniyalar</h2>
-               <span class="badge badge-gold">Asl eski narx tarixi bilan</span>
+               <div>
+                 <h2 style="margin-bottom:2px;">🔥 Hafta chegirmalari</h2>
+                 <span class="text-xs text-muted">Asl eski narx tarixi va chegirmali takliflar</span>
+               </div>
+               <a href="#catalog?sort=popular" class="btn btn-outline btn-sm">Barchasi →</a>
              </div>
-             <div class="grid-4">
+             <div class="h-scroll-snap">
                ${data.discounts.map(renderProductCard).join("")}
              </div>
            </section>`
         : ""
     }
 
-    <!-- New / Popular Arrivals -->
+    <!-- "Oyiga ... so'mdan" Curated 5-Col Grid -->
     <section class="mt-6">
       <div class="flex-between mb-3">
-        <h2>Ommabop va yangi mahsulotlar</h2>
-        <a href="#catalog" class="text-sm fw-bold">Katalogga o‘tish →</a>
+        <div>
+          <h2>“Oyiga … so‘mdan” — Shaffof nasiya tanlovi</h2>
+          <p class="text-sm text-muted" style="margin:0;">Har bir kartada muddat, jami to‘lov summasi va indikativ belgi ochiq ko‘rsatiladi (28.3).</p>
+        </div>
+        <a href="#catalog?installment_only=true&sort=monthly_asc" class="btn btn-outline btn-sm">Barcha nasiya tovarlari →</a>
       </div>
-      <div class="grid-4">
+      <div class="uzum-grid">
+        ${data.installment_picks.map(renderProductCard).join("")}
+      </div>
+    </section>
+
+    <!-- New / Popular Arrivals 5-Col Grid -->
+    <section class="mt-6">
+      <div class="flex-between mb-3">
+        <h2>🏆 Ommabop va yangi mahsulotlar</h2>
+        <a href="#catalog" class="btn btn-outline btn-sm">Katalogga o‘tish →</a>
+      </div>
+      <div class="uzum-grid">
         ${data.new_arrivals.map(renderProductCard).join("")}
       </div>
     </section>
@@ -144,11 +166,33 @@ export async function renderHomeView(container, reloadCartBadge) {
     </section>
   `;
 
-  container.querySelectorAll("[data-cat-slug]").forEach((el) => {
-    el.addEventListener("click", () => {
-      location.hash = `#catalog?category=${encodeURIComponent(el.dataset.catSlug)}`;
+  if (banners.length > 1) {
+    let slideIdx = 0;
+    const track = document.getElementById("hero-track");
+    const carousel = document.getElementById("hero-carousel");
+    const dots = Array.from(document.querySelectorAll("[data-hero-dot]"));
+    const goSlide = (n) => {
+      slideIdx = ((n % banners.length) + banners.length) % banners.length;
+      if (track) track.style.transform = `translateX(-${slideIdx * 100}%)`;
+      dots.forEach((d, idx) => d.classList.toggle("active", idx === slideIdx));
+    };
+    document.getElementById("hero-prev")?.addEventListener("click", () => goSlide(slideIdx - 1));
+    document.getElementById("hero-next")?.addEventListener("click", () => goSlide(slideIdx + 1));
+    dots.forEach((d) => d.addEventListener("click", () => goSlide(Number(d.dataset.heroDot))));
+
+    let timer = setInterval(() => goSlide(slideIdx + 1), 5000);
+    carousel?.addEventListener("mouseenter", () => clearInterval(timer));
+    carousel?.addEventListener("mouseleave", () => {
+      clearInterval(timer);
+      timer = setInterval(() => goSlide(slideIdx + 1), 5000);
     });
-  });
+    const stopTimer = () => {
+      clearInterval(timer);
+      window.removeEventListener("hashchange", stopTimer);
+    };
+    window.addEventListener("hashchange", stopTimer);
+  }
+
   container.querySelectorAll("[data-quick-search]").forEach((btn) => {
     btn.addEventListener("click", () => {
       location.hash = `#catalog?q=${encodeURIComponent(btn.dataset.quickSearch)}`;
@@ -252,7 +296,7 @@ export async function renderCatalogView(container, queryStr, reloadCartBadge) {
       <section>
         ${
           catalogData.results.length
-            ? `<div class="grid-3">${catalogData.results.map(renderProductCard).join("")}</div>`
+            ? `<div class="uzum-grid" style="grid-template-columns:repeat(auto-fill,minmax(215px,1fr));">${catalogData.results.map(renderProductCard).join("")}</div>`
             : `<div class="state-box">
                  <h3>Mahsulotlar topilmadi</h3>
                  <p class="text-muted">Qidiruv so‘rovini yumshating yoki filtrlarni tozalab ko‘ring.</p>

@@ -380,3 +380,262 @@ def process_payme_rpc(payload: dict, auth_header: str, *, skip_auth_for_trusted_
         }
 
     return {"jsonrpc": "2.0", "id": rpc_id, "error": {"code": -32601, "message": "Method not found"}}
+
+
+# --- Uzum Bank Merchant API & Unified Checkout Link Generator ---
+import base64 as _psp_base64
+import hashlib as _psp_hashlib
+import hmac as _psp_hmac
+from urllib.parse import urlencode as _psp_urlencode
+from django.conf import settings as _psp_settings
+from django.db import transaction as _psp_transaction
+from django.utils import timezone as _psp_timezone
+from apps.finance.models import PspTransaction as _PspTransaction
+from apps.governance.models import SecurityEvent as _SecurityEvent
+
+
+def build_psp_checkout_payload(*, psp_provider: str, reference: str, amount_uzs: int) -> dict:
+    """Build official Payme / Click / Uzum Bank / Paynet checkout redirect URLs & deep-links."""
+    amt_uzs = max(1000, int(amount_uzs or 0))
+    amt_tiyin = amt_uzs * 100
+    sandbox = bool(getattr(_psp_settings, "ZARVON_SANDBOX_MODE", True))
+
+    payme_mid = getattr(_psp_settings, "PAYME_MERCHANT_ID", "") or "65f9a8e10000000000000001"
+    payme_raw = f"m={payme_mid};ac.order_id={reference};a={amt_tiyin}"
+    payme_b64 = _psp_base64.b64encode(payme_raw.encode("utf-8")).decode("ascii")
+    payme_host = "test.paycom.uz" if sandbox else "checkout.paycom.uz"
+    payme_url = f"https://{payme_host}/{payme_b64}"
+
+    click_params = _psp_urlencode(
+        {
+            "service_id": getattr(_psp_settings, "CLICK_SERVICE_ID", "38491"),
+            "merchant_id": getattr(_psp_settings, "CLICK_MERCHANT_ID", "24810"),
+            "amount": f"{amt_uzs:.2f}",
+            "transaction_param": reference,
+        }
+    )
+    click_url = f"https://my.click.uz/services/pay?{click_params}"
+
+    uzum_service = getattr(_psp_settings, "UZUM_SERVICE_ID", "49210")
+    uzum_params = _psp_urlencode({"serviceId": uzum_service, "orderId": reference, "amount": amt_tiyin})
+    uzum_url = f"https://www.apelsin.uz/open-service?{uzum_params}"
+
+    paynet_url = f"https://paynet.uz/payment?merchant=zarvon&account={reference}&amount={amt_uzs}"
+
+    provider_map = {
+        "Payme": payme_url,
+        "Click": click_url,
+        "Uzum Bank": uzum_url,
+        "Paynet": paynet_url,
+    }
+    selected_url = provider_map.get(psp_provider, payme_url)
+    return {
+        "psp_provider": psp_provider,
+        "reference": reference,
+        "amount_uzs": amt_uzs,
+        "amount_tiyin": amt_tiyin,
+        "mode": "SANDBOX" if sandbox else "PRODUCTION",
+        "checkout_url": selected_url,
+        "links": {
+            "payme": payme_url,
+            "click": click_url,
+            "uzum_bank": uzum_url,
+            "paynet": paynet_url,
+        },
+        "protocol": (
+            "Uzum Merchant REST (/check -> /create -> /confirm, tiyin)"
+            if psp_provider == "Uzum Bank"
+            else "JSON-RPC 2.0 (Base64 checkout.paycom.uz)"
+            if psp_provider == "Payme"
+            else "Click Prepare/Complete MD5"
+            if psp_provider == "Click"
+            else "Token/Gateway"
+        ),
+    }
+
+
+def _uzum_now_ms() -> int:
+    return int(_psp_timezone.now().timestamp() * 1000)
+
+
+def verify_uzum_auth(auth_header: str, signature_header: str = "", body_raw: str = "") -> bool:
+    """Validate Uzum Bank Basic auth (`Basic base64(serviceId:secretKey)`) or HMAC-SHA256 X-Signature."""
+    secret = getattr(_psp_settings, "UZUM_SECRET_KEY", "") or ""
+    service_id = str(getattr(_psp_settings, "UZUM_SERVICE_ID", "") or "")
+    if not secret:
+        return False
+
+    if auth_header and auth_header.startswith("Basic "):
+        try:
+            decoded = _psp_base64.b64decode(auth_header[6:].strip()).decode("utf-8")
+            user_part, _, pass_part = decoded.partition(":")
+            if _psp_hmac.compare_digest(pass_part, secret) and (not service_id or _psp_hmac.compare_digest(user_part, service_id)):
+                return True
+        except Exception:
+            pass
+
+    if signature_header and body_raw is not None:
+        digest = _psp_hmac.new(secret.encode("utf-8"), body_raw.encode("utf-8"), _psp_hashlib.sha256).hexdigest()
+        if _psp_hmac.compare_digest(signature_header.strip().lower(), digest.lower()):
+            return True
+
+    return False
+
+
+def _uzum_err(code: str, message: str, service_id: str = "") -> dict:
+    return {
+        "serviceId": str(service_id or getattr(_psp_settings, "UZUM_SERVICE_ID", "49210")),
+        "timestamp": _uzum_now_ms(),
+        "status": "FAILED",
+        "errorCode": code,
+        "errorMessage": message,
+    }
+
+
+def process_uzum_webhook(
+    stage: str,
+    payload: dict,
+    auth_header: str = "",
+    signature_header: str = "",
+    body_raw: str = "",
+) -> dict:
+    """Official Uzum Bank Merchant API state machine (`check`, `create`, `confirm`, `reverse`, `status`)."""
+    service_id = str(payload.get("serviceId") or getattr(_psp_settings, "UZUM_SERVICE_ID", "49210"))
+    if not verify_uzum_auth(auth_header, signature_header=signature_header, body_raw=body_raw):
+        _SecurityEvent.objects.create(
+            event_type="PSP_UZUM_AUTH_FAILED",
+            severity="HIGH",
+            description="Uzum Bank webhook autentifikatsiya xatosi (Basic/HMAC imzo mos emas).",
+            details={"stage": stage, "serviceId": service_id},
+        )
+        return _uzum_err("10001", "Unauthorized merchant signature", service_id)
+
+    params = payload.get("params") or {}
+    reference = str(params.get("orderId") or params.get("account") or payload.get("orderId") or "").strip()
+    trans_id = str(payload.get("transId") or "").strip()
+    try:
+        amount_tiyin = int(payload.get("amount") or 0)
+    except (TypeError, ValueError):
+        amount_tiyin = 0
+
+    stage_norm = (stage or payload.get("action") or "check").strip().lower()
+
+    if stage_norm == "check":
+        target_kind, target_obj, expected_uzs = resolve_payment_target(reference)
+        if not target_obj:
+            return _uzum_err("10007", "Buyurtma yoki shartnoma topilmadi", service_id)
+        return {
+            "serviceId": service_id,
+            "timestamp": _uzum_now_ms(),
+            "status": "OK",
+            "data": {
+                "account": {"value": reference},
+                "expected_amount_tiyin": int(expected_uzs * 100),
+            },
+        }
+
+    with _psp_transaction.atomic():
+        if stage_norm == "create":
+            target_kind, target_obj, expected_uzs = resolve_payment_target(reference)
+            if not target_obj:
+                return _uzum_err("10007", "Buyurtma topilmadi", service_id)
+            order = target_obj if target_kind == "ORDER" else None
+            contract = target_obj if target_kind == "CONTRACT" else None
+            if amount_tiyin <= 0 or (target_kind == "ORDER" and expected_uzs > 0 and amount_tiyin != expected_uzs * 100):
+                return _uzum_err("10011", "Summa mos emas (tiyin)", service_id)
+            if not trans_id:
+                trans_id = f"uzm-{_uzum_now_ms()}"
+            existing = _PspTransaction.objects.select_for_update().filter(
+                psp_provider="Uzum Bank", external_trans_id=trans_id
+            ).first()
+            if existing:
+                return {
+                    "serviceId": service_id,
+                    "transId": existing.external_trans_id,
+                    "status": "CREATED",
+                    "transTime": _uzum_now_ms(),
+                    "amount": existing.amount_tiyin,
+                }
+            tx = _PspTransaction.objects.create(
+                psp_provider="Uzum Bank",
+                external_trans_id=trans_id,
+                merchant_trans_id=reference,
+                action_stage="PREPARED",
+                amount_tiyin=amount_tiyin,
+                state_code=1,
+                signature_verified=True,
+                idempotency_key=f"uzum-{trans_id}",
+                order=order,
+                contract=contract,
+                raw_payload_sanitized={"stage": "create", "reference": reference, "amount_tiyin": amount_tiyin},
+                is_demo=bool(getattr(_psp_settings, "ZARVON_SANDBOX_MODE", True)),
+            )
+            return {
+                "serviceId": service_id,
+                "transId": tx.external_trans_id,
+                "status": "CREATED",
+                "transTime": _uzum_now_ms(),
+                "amount": tx.amount_tiyin,
+            }
+
+        tx = _PspTransaction.objects.select_for_update().filter(
+            psp_provider="Uzum Bank", external_trans_id=trans_id
+        ).first()
+        if not tx:
+            return _uzum_err("10014", "Tranzaksiya topilmadi", service_id)
+
+        if stage_norm == "confirm":
+            if tx.state_code == -1:
+                return _uzum_err("10015", "Bekor qilingan tranzaksiyani tasdiqlab bo‘lmaydi", service_id)
+            if tx.state_code == 2:
+                return {
+                    "serviceId": service_id,
+                    "transId": tx.external_trans_id,
+                    "status": "CONFIRMED",
+                    "confirmTime": _uzum_now_ms(),
+                    "amount": tx.amount_tiyin,
+                }
+            tx.state_code = 2
+            tx.action_stage = "PERFORMED"
+            tx.save(update_fields=["state_code", "action_stage", "updated_at"])
+            t_kind = "ORDER" if tx.order_id else "CONTRACT"
+            t_obj = tx.order or tx.contract
+            if t_obj:
+                settle_psp_payment(
+                    psp_provider="Uzum Bank",
+                    target_kind=t_kind,
+                    target_obj=t_obj,
+                    amount_uzs=tx.amount_tiyin // 100,
+                    idem_key=f"uzum-settle-{tx.external_trans_id}",
+                    external_trans_id=tx.external_trans_id,
+                )
+            return {
+                "serviceId": service_id,
+                "transId": tx.external_trans_id,
+                "status": "CONFIRMED",
+                "confirmTime": _uzum_now_ms(),
+                "amount": tx.amount_tiyin,
+            }
+
+        if stage_norm == "reverse":
+            tx.state_code = -1
+            tx.action_stage = "CANCELLED"
+            tx.save(update_fields=["state_code", "action_stage", "updated_at"])
+            return {
+                "serviceId": service_id,
+                "transId": tx.external_trans_id,
+                "status": "REVERSED",
+                "reverseTime": _uzum_now_ms(),
+                "amount": tx.amount_tiyin,
+            }
+
+        if stage_norm == "status":
+            status_map = {1: "CREATED", 2: "CONFIRMED", -1: "REVERSED", -2: "REVERSED"}
+            return {
+                "serviceId": service_id,
+                "transId": tx.external_trans_id,
+                "status": status_map.get(tx.state_code, "FAILED"),
+                "amount": tx.amount_tiyin,
+            }
+
+    return _uzum_err("10002", f"Noma’lum Uzum Bank bosqichi: {stage_norm}", service_id)

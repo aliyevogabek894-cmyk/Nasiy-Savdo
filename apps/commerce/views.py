@@ -35,6 +35,7 @@ from apps.finance.models import (
     PspTransaction,
 )
 from apps.finance.providers import ComplianceViolationError, OwnInstallmentProvider, PartnerFinanceProvider
+from apps.finance.psp import build_psp_checkout_payload
 from apps.governance.models import AuditLog, BhmValue, ComplianceRuleVersion, NotificationEvent
 from apps.inventory.models import Reservation, StockLevel, StockMovement
 
@@ -122,13 +123,29 @@ class CartView(APIView):
         product = Product.objects.filter(id=request.data.get("product_id"), status=ProductStatus.APPROVED).select_related("stock").first()
         if not product:
             return Response({"detail": "Mahsulot topilmadi."}, status=status.HTTP_404_NOT_FOUND)
-        qty = max(1, int(request.data.get("quantity") or 1))
         avail = product.stock.available if hasattr(product, "stock") else 0
+        delta = request.data.get("delta")
+        if delta is not None:
+            ci_cur = cart.items.filter(product=product).first()
+            next_qty = (ci_cur.quantity if ci_cur else 0) + int(delta)
+            if next_qty <= 0:
+                if ci_cur:
+                    ci_cur.delete()
+                return Response(self._serialize_cart(cart))
+            qty = next_qty
+            set_exact = True
+        else:
+            raw_qty = request.data.get("quantity")
+            set_exact = bool(request.data.get("set_exact"))
+            if set_exact and raw_qty is not None and int(raw_qty) <= 0:
+                cart.items.filter(product=product).delete()
+                return Response(self._serialize_cart(cart))
+            qty = max(1, int(raw_qty or 1))
         if avail < qty:
             return Response({"detail": f"Omborda faqat {avail} dona mavjud."}, status=status.HTTP_400_BAD_REQUEST)
         ci, created = CartItem.objects.get_or_create(cart=cart, product=product, defaults={"quantity": qty})
         if not created:
-            if request.data.get("set_exact"):
+            if set_exact:
                 ci.quantity = qty
             else:
                 ci.quantity = min(avail, ci.quantity + qty)
@@ -410,6 +427,7 @@ class CheckoutView(APIView):
                 raw_payload_sanitized={"channel": "CHECKOUT_DIRECT_PAY", "psp": psp_name, "sandbox": settings.ZARVON_SANDBOX_MODE},
                 is_demo=settings.ZARVON_SANDBOX_MODE,
             )
+            finance_result = {**(finance_result or {}), "psp_checkout": build_psp_checkout_payload(psp_provider=psp_name, reference=order_num, amount_uzs=total_amount)}
 
         if not items_input:
             cart.items.all().delete()
@@ -423,7 +441,7 @@ class CheckoutView(APIView):
             body_masked=f"Buyurtma summasi: {total_amount:,} so‘m. Yetkazib berishda OTP koddan foydalaning.",
         )
         AuditLog.record(actor=request.user, action="ORDER_CREATED", object_type="Order", object_id=master.id, reason=f"Kanal: {payment_channel}", after={"order_number": order_num, "total_amount": total_amount})
-        return Response({"ok": True, "order_id": str(master.id), "order_number": order_num, "sub_orders": sub_orders_out, "finance": finance_result}, status=status.HTTP_201_CREATED)
+        return Response({"ok": True, "order_id": str(master.id), "order_number": order_num, "sub_orders": sub_orders_out, "finance": finance_result, "total_amount": total_amount}, status=status.HTTP_201_CREATED)
 
 
 class OrdersListView(APIView):

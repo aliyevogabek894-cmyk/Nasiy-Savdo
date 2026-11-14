@@ -49,6 +49,7 @@ def _product_card_dict(p: Product, default_plan=None, bhm_limit: int = 110_000_0
         "warranty_months": p.warranty_months,
         "return_days": p.return_days,
         "delivery_sla_days": p.delivery_sla_days,
+        "delivery_badge": "Ertaga bepul" if p.delivery_sla_days <= 1 else f"{p.delivery_sla_days} kunda bepul",
         "installment_eligible": installment_ok,
         "resell_risk_level": p.resell_risk_level,
         "rating": p.rating,

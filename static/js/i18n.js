@@ -58,6 +58,8 @@ export const AppState = {
   mfaVerified: false,
   demoAccounts: [],
   cartCount: 0,
+  cartQtyMap: {},
+  deliveryPoint: JSON.parse(localStorage.getItem("zarvon_dp") || "null"),
   compareIds: JSON.parse(localStorage.getItem("zarvon_compare") || "[]"),
   wishlistIds: new Set(),
 };

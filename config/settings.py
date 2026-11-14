@@ -21,6 +21,8 @@ CLICK_MERCHANT_ID = os.environ.get("CLICK_MERCHANT_ID", "24810" if ZARVON_SANDBO
 CLICK_SECRET_KEY = os.environ.get("CLICK_SECRET_KEY", "zarvon-click-sandbox-secret" if ZARVON_SANDBOX_MODE else "")
 PAYME_MERCHANT_ID = os.environ.get("PAYME_MERCHANT_ID", "65f9a8e10000000000000001" if ZARVON_SANDBOX_MODE else "")
 PAYME_CASHBOX_KEY = os.environ.get("PAYME_CASHBOX_KEY", "zarvon-payme-sandbox-key" if ZARVON_SANDBOX_MODE else "")
+UZUM_SERVICE_ID = os.environ.get("UZUM_SERVICE_ID", "49210" if ZARVON_SANDBOX_MODE else "")
+UZUM_SECRET_KEY = os.environ.get("UZUM_SECRET_KEY", "zarvon-uzum-sandbox-secret" if ZARVON_SANDBOX_MODE else "")
 KATM_API_URL = os.environ.get("KATM_API_URL", "")
 MIB_API_URL = os.environ.get("MIB_API_URL", "")
 

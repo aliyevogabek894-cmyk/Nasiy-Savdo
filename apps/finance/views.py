@@ -39,9 +39,11 @@ from apps.finance.models import (
 )
 from apps.finance.providers import ComplianceViolationError, OwnInstallmentProvider
 from apps.finance.psp import (
+    build_psp_checkout_payload,
     compute_click_signature,
     process_click_webhook,
     process_payme_rpc,
+    process_uzum_webhook,
     resolve_payment_target,
     settle_psp_payment,
 )
@@ -996,18 +998,11 @@ class PspCheckoutAndSimulatorView(APIView):
             if not used_card:
                 return Response({"detail": "Tanlangan karta topilmadi."}, status=status.HTTP_404_NOT_FOUND)
 
+        checkout_payload = build_psp_checkout_payload(psp_provider=psp_provider, reference=reference, amount_uzs=req_amount)
         if not settings.ZARVON_SANDBOX_MODE:
             # In strict production mode without sandbox, return signed checkout parameters instead of auto-settling.
-            payme_params = f"m={settings.PAYME_MERCHANT_ID};ac.order_id={reference};a={req_amount * 100}"
-            payme_b64 = base64.b64encode(payme_params.encode("utf-8")).decode("utf-8")
             return Response(
-                {
-                    "mode": "LIVE_CHECKOUT_INTENT",
-                    "psp_provider": psp_provider,
-                    "reference": reference,
-                    "amount_uzs": req_amount,
-                    "checkout_url": f"https://checkout.paycom.uz/{payme_b64}" if psp_provider == "Payme" else f"https://my.click.uz/services/pay?service_id={settings.CLICK_SERVICE_ID}&merchant_id={settings.CLICK_MERCHANT_ID}&amount={req_amount}&transaction_param={reference}",
-                },
+                {**checkout_payload, "mode": "LIVE_CHECKOUT_INTENT"},
                 status=status.HTTP_200_OK,
             )
 
@@ -1086,6 +1081,18 @@ class PspCheckoutAndSimulatorView(APIView):
                 {"step": "PAYME CreateTransaction (state=1)", "response": r2},
                 {"step": "PAYME PerformTransaction (state=2)", "response": r3},
             ]
+        elif psp_provider == "Uzum Bank":
+            uz_trans_id = f"uzm-{uuid.uuid4().hex[:12]}"
+            uz_auth = "Basic " + base64.b64encode(f"{settings.UZUM_SERVICE_ID}:{settings.UZUM_SECRET_KEY}".encode("utf-8")).decode("utf-8")
+            amount_tiyin = req_amount * 100
+            u1 = process_uzum_webhook("check", {"serviceId": settings.UZUM_SERVICE_ID, "params": {"orderId": reference}}, auth_header=uz_auth)
+            u2 = process_uzum_webhook("create", {"serviceId": settings.UZUM_SERVICE_ID, "transId": uz_trans_id, "amount": amount_tiyin, "params": {"orderId": reference}}, auth_header=uz_auth)
+            u3 = process_uzum_webhook("confirm", {"serviceId": settings.UZUM_SERVICE_ID, "transId": uz_trans_id}, auth_header=uz_auth)
+            protocol_trace = [
+                {"step": "UZUM /check", "response": u1},
+                {"step": "UZUM /create (tiyin)", "response": u2},
+                {"step": "UZUM /confirm (SETTLED)", "response": u3},
+            ]
         else:
             ext_id = f"{psp_provider[:3].upper()}-{uuid.uuid4().hex[:10].upper()}"
             PspTransaction.objects.create(
@@ -1128,6 +1135,9 @@ class PspCheckoutAndSimulatorView(APIView):
                 "reference": reference,
                 "amount_uzs": req_amount,
                 "card_masked": used_card.card_masked_pan if used_card else None,
+                "checkout_url": checkout_payload["checkout_url"],
+                "links": checkout_payload["links"],
+                "protocol": checkout_payload["protocol"],
                 "trace": protocol_trace,
                 "detail": f"{psp_provider} orqali {req_amount:,} so‘m to‘lov muvaffaqiyatli amalga oshirildi (Sandbox).",
             }
@@ -1355,3 +1365,25 @@ class AdminScoringReportsView(APIView):
                 },
             }
         )
+
+
+class UzumMerchantWebhookView(APIView):
+    """Official Uzum Bank Merchant API REST endpoints (/check, /create, /confirm, /reverse, /status)."""
+
+    authentication_classes = []
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request, stage: str = ""):
+        raw_body = request.body.decode("utf-8", errors="replace") if request.body else ""
+        payload = request.data if isinstance(request.data, dict) else {}
+        auth_header = request.META.get("HTTP_AUTHORIZATION", "")
+        sig_header = request.META.get("HTTP_X_SIGNATURE", "")
+        res = process_uzum_webhook(
+            stage or payload.get("action") or "check",
+            payload,
+            auth_header=auth_header,
+            signature_header=sig_header,
+            body_raw=raw_body,
+        )
+        http_status = 200 if res.get("status") != "FAILED" else (401 if res.get("errorCode") == "10001" else 400)
+        return Response(res, status=http_status)
