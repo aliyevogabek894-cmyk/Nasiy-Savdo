@@ -18,58 +18,62 @@
     <span>⚠ Internet aloqasi uzildi. Maxfiy ma’lumotlar oflaynda keshlanmaydi; aloqa tiklangach davom eting.</span>
   </div>
 
-  <!-- Honest Sandbox / Compliance Notice Bar (Section 1.2 & 26.3) -->
-  <div class="compliance-bar" role="region" aria-label="Platforma maqomi">
-    <div class="container compliance-bar-inner">
-      <div class="compliance-pill">
-        <span class="dot-gold" aria-hidden="true"></span>
-        <span data-i18n="sandbox_notice">SANDBOX / DEMO REJIMI: Barcha nasiya va bank takliflari sinov ma’lumotlari; real kredit yoki pul operatsiyasi amalga oshirilmaydi.</span>
-      </div>
-      <div class="compliance-links">
-        <button type="button" id="btn-delivery-point" class="delivery-top-pill" title="Topshirish punktini tanlash">
-          📍 <span id="header-dp-label">Toshkent • Yetkazish</span> ▾
-        </button>
-        <span class="badge-inline">2027 Standarti: ≤ 12 oy • ≤ 250 BHM • ≤ 50%/yil • 0% erta to‘lov</span>
-      </div>
+  <!-- Slim Dismissible Demo / Sandbox Notice Bar -->
+  <div id="top-notice-bar" class="top-notice-bar" role="region" aria-label="Platforma maqomi">
+    <div class="container top-notice-inner">
+      <span class="top-notice-badge" aria-hidden="true">i</span>
+      <span data-i18n="sandbox_notice">Demo (sinov) rejimi: Barcha nasiya va bank takliflari test ma’lumotlari. Hozircha real kredit va pul o‘tkazmalari amalga oshirilmaydi.</span>
+      <button id="btn-dismiss-notice" type="button" class="notice-close-btn" aria-label="Bildirishnomani yopish" title="Yopish">✕</button>
     </div>
   </div>
 
-  <!-- Main Sticky Header -->
-  <header class="site-header" role="banner">
+  <!-- Main Sticky Dark-Navy Luxury Header -->
+  <header class="site-header site-header-luxury" role="banner">
     <div class="container header-inner">
       <div class="header-left">
         <a href="#home" class="brand-logo" aria-label="ZARVON bosh sahifa">
-          <img src="{% static 'icons/zarvon-icon.svg' %}" alt="" width="36" height="36" class="brand-mark">
+          <img src="{% static 'icons/zarvon-icon.svg' %}" alt="" width="34" height="34" class="brand-mark">
           <div>
             <span class="brand-wordmark">ZARVON</span>
-            <span class="brand-sub">MARKETPLACE &amp; NASIYA</span>
+            <span class="brand-sub">FINTECH &amp; MARKETPLACE</span>
           </div>
         </a>
-        <button id="btn-nav-catalog" class="btn btn-gold btn-sm hide-mobile" data-route="#catalog">
-          <span aria-hidden="true">☰</span> <span data-i18n="nav_catalog">Katalog</span>
+        <button type="button" id="btn-delivery-point" class="city-picker-btn" title="Topshirish punktini tanlash">
+          <span aria-hidden="true">📍</span>
+          <span id="header-dp-label">Toshkent</span>
+          <span aria-hidden="true">▾</span>
         </button>
       </div>
 
-      <!-- Smart Search Bar (Section 29.2) -->
+      <!-- Pill White Smart Search Bar -->
       <form id="global-search-form" class="search-box" role="search">
         <input
           id="global-search-input"
           type="search"
           autocomplete="off"
-          placeholder="Qidirish: iPhone, айфон, gʻilof, televizor, sovutgich..."
+          placeholder="Telefon, noutbuk, televizor..."
           aria-label="Mahsulotlarni aqlli qidirish"
         >
         <button type="submit" class="search-submit" aria-label="Qidirish">Qidirish</button>
         <div id="search-suggestions" class="search-suggestions hidden" role="listbox"></div>
       </form>
 
-      <!-- Header Utility Actions -->
+      <!-- Desktop Direct Links + Utility Actions -->
+      <nav class="header-nav-links" aria-label="Asosiy havolalar">
+        <button id="btn-nav-catalog" type="button" class="hdr-nav-item" data-route="#catalog">
+          <span aria-hidden="true">⊞</span> <span data-i18n="nav_catalog">Katalog</span>
+        </button>
+        <a href="#calculator" class="hdr-nav-item" data-nav="calculator">🧮 Nasiya</a>
+        <a href="#seller" class="hdr-nav-item" data-nav="seller">🏪 Sotuvchilar</a>
+        <a href="#customer" class="hdr-nav-item" data-nav="customer">🎧 Yordam</a>
+      </nav>
+
       <div class="header-actions">
-        <button id="btn-role-switcher" class="btn btn-outline btn-sm" title="Sandbox rol almashuvi">
+        <button id="btn-role-switcher" class="hdr-pill-btn" title="Hisob va sandbox rol almashuvi">
           <span id="current-role-badge">👤 Kirish / Rol</span>
         </button>
 
-        <select id="lang-switcher" class="select-compact" aria-label="Tilni tanlash">
+        <select id="lang-switcher" class="select-compact hide-mobile" aria-label="Tilni tanlash">
           <option value="uz">UZ</option>
           <option value="ru">RU</option>
           <option value="en">EN</option>
@@ -79,12 +83,12 @@
           <span id="theme-icon">🌙</span>
         </button>
 
-        <a href="#compare" class="icon-btn" title="Taqqoslash">
+        <a href="#compare" class="icon-btn hide-mobile" title="Taqqoslash">
           <span>⚖</span>
           <span id="compare-count" class="count-pill hidden">0</span>
         </a>
 
-        <a href="#cart" class="btn btn-primary btn-sm cart-trigger" aria-label="Savat">
+        <a href="#cart" class="hdr-cart-btn cart-trigger" aria-label="Savat">
           <span>🛒</span>
           <span class="hide-sm" data-i18n="nav_cart">Savat</span>
           <span id="cart-count" class="count-pill count-gold">0</span>

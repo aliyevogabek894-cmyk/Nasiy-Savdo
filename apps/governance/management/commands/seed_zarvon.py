@@ -230,20 +230,20 @@ class Command(BaseCommand):
             StockLevel.objects.create(product=p, warehouse=wh, quantity=stock_qty, min_threshold=4)
             return p
 
-        p_iphone = add_prod(store1, wh1, c_phone, "Apple", "APL-16P-256", "Apple iPhone 16 Pro 256GB Titan", "iphone-16-pro-256", 14_990_000, 16_200_000, "/static/icons/smartphone.svg", {"Xotira": "256 GB", "Ekran": "6.3\" LTPO OLED", "Kamera": "48 MP Pro"}, stock_qty=12, resell="HIGH", rating=4.9, sales=88)
-        p_s25 = add_prod(store1, wh1, c_phone, "Samsung", "SAM-S25-256", "Samsung Galaxy S25 Ultra 256GB", "samsung-s25-ultra", 13_800_000, 14_500_000, "/static/icons/smartphone.svg", {"Xotira": "256 GB", "Ekran": "6.8\" AMOLED 2X", "Stilus": "S-Pen"}, stock_qty=15, resell="HIGH", rating=4.9, sales=74)
-        add_prod(store1, wh1, c_phone, "Samsung", "SAM-A55-128", "Samsung Galaxy A55 5G 128GB", "samsung-a55-5g", 4_490_000, 4_950_000, "/static/icons/smartphone.svg", {"Xotira": "128 GB", "RAM": "8 GB", "Batareya": "5000 mAh"}, stock_qty=28, resell="MEDIUM", rating=4.8, sales=126)
-        p_mac = add_prod(store1, wh1, c_laptop, "Apple", "APL-MBA-M3", "MacBook Air 13 M3 16GB/512GB", "macbook-air-m3-16-512", 16_400_000, None, "/static/icons/laptop.svg", {"Protsessor": "Apple M3", "RAM": "16 GB", "SSD": "512 GB"}, stock_qty=9, resell="HIGH", rating=5.0, sales=41)
-        add_prod(store1, wh1, c_laptop, "Lenovo", "LNV-TP-14", "Lenovo ThinkPad E14 Gen 5 Core i5", "lenovo-thinkpad-e14", 8_600_000, 9_300_000, "/static/icons/laptop.svg", {"Protsessor": "Intel Core i5-1335U", "RAM": "16 GB", "SSD": "512 GB"}, stock_qty=11, resell="MEDIUM", rating=4.7, sales=53)
-        p_tv = add_prod(store2, wh2, c_tv, "LG", "LG-55-QLED", "LG QNED 55\" 4K Smart TV webOS", "lg-qned-55-4k", 8_950_000, 9_900_000, "/static/icons/tv.svg", {"Diagonal": "55 dyuym", "Ruxsat": "4K UHD", "Smart": "webOS 24"}, stock_qty=10, resell="LOW", rating=4.8, sales=64)
-        add_prod(store2, wh2, c_tv, "Artel", "ART-43-FHD", "Artel 43\" Full HD Android TV", "artel-43-android-tv", 3_290_000, 3_650_000, "/static/icons/tv.svg", {"Diagonal": "43 dyuym", "OS": "Google Android TV", "Kafolat": "36 oy"}, stock_qty=22, resell="LOW", rating=4.6, sales=142)
-        p_fridge = add_prod(store2, wh2, c_fridge, "Samsung", "SAM-RB38", "Samsung No Frost Inverter Sovutgich 385L", "samsung-no-frost-385", 7_850_000, 8_400_000, "/static/icons/fridge.svg", {"Hajm": "385 litr", "Tizim": "Total No Frost", "Sinf": "A++"}, stock_qty=7, resell="LOW", rating=4.9, sales=49)
-        add_prod(store2, wh2, c_washer, "Bosch", "BSH-WGA-8", "Bosch Serie 4 Kir yuvish mashinasi 8 kg", "bosch-serie4-8kg", 6_900_000, None, "/static/icons/washer.svg", {"Sig‘im": "8 kg", "Aylanish": "1200 ayl/min", "Motor": "EcoSilence"}, stock_qty=2, resell="LOW", rating=4.9, sales=37)  # Low stock alert trigger!
-        p_sofa = add_prod(store2, wh2, c_mebel, "IKEA Style", "MEB-LOFT-3", "Loft Komfort burchak divani (Velvet)", "loft-komfort-divan", 5_900_000, 6_700_000, "/static/icons/sofa.svg", {"O‘lcham": "260 × 170 sm", "Mato": "Anti-dog‘ Velvet", "Karkas": "Qattiq yog‘och"}, stock_qty=6, resell="LOW", rating=4.7, sales=29)
-        add_prod(store2, wh2, c_realty, "Tashkent City", "RE-OFIS-01", "Tijorat ofis maydoni 45 kv.m (Faqat naqd)", "tijorat-ofis-45kvm", 680_000_000, None, "/static/icons/realestate.svg", {"Maydon": "45 kv.m", "Qavat": "3-qavat", "Nasiya": "Qonunan taqiqlangan (27.1)"}, stock_qty=1, resell="LOW", rating=5.0, sales=2)
+        p_iphone = add_prod(store1, wh1, c_phone, "Apple", "APL-16P-256", "Apple iPhone 16 Pro 256GB Titan", "iphone-16-pro-256", 14_990_000, 16_200_000, "/static/img/products/iphone-16-pro.jpg", {"Xotira": "256 GB", "Ekran": "6.3\" LTPO OLED", "Kamera": "48 MP Pro"}, stock_qty=12, resell="HIGH", rating=4.9, sales=88)
+        p_s25 = add_prod(store1, wh1, c_phone, "Samsung", "SAM-S25-256", "Samsung Galaxy S25 Ultra 256GB", "samsung-s25-ultra", 13_800_000, 14_500_000, "/static/img/products/galaxy-s25-ultra.jpg", {"Xotira": "256 GB", "Ekran": "6.8\" AMOLED 2X", "Stilus": "S-Pen"}, stock_qty=15, resell="HIGH", rating=4.9, sales=74)
+        add_prod(store1, wh1, c_phone, "Samsung", "SAM-A55-128", "Samsung Galaxy A55 5G 128GB", "samsung-a55-5g", 4_490_000, 4_950_000, "/static/img/products/galaxy-a55.jpg", {"Xotira": "128 GB", "RAM": "8 GB", "Batareya": "5000 mAh"}, stock_qty=28, resell="MEDIUM", rating=4.8, sales=126)
+        p_mac = add_prod(store1, wh1, c_laptop, "Apple", "APL-MBA-M3", "MacBook Air 13 M3 16GB/512GB", "macbook-air-m3-16-512", 16_400_000, None, "/static/img/products/macbook-air-m3.jpg", {"Protsessor": "Apple M3", "RAM": "16 GB", "SSD": "512 GB"}, stock_qty=9, resell="HIGH", rating=5.0, sales=41)
+        add_prod(store1, wh1, c_laptop, "Lenovo", "LNV-TP-14", "Lenovo ThinkPad E14 Gen 5 Core i5", "lenovo-thinkpad-e14", 8_600_000, 9_300_000, "/static/img/products/lenovo-thinkpad.jpg", {"Protsessor": "Intel Core i5-1335U", "RAM": "16 GB", "SSD": "512 GB"}, stock_qty=11, resell="MEDIUM", rating=4.7, sales=53)
+        p_tv = add_prod(store2, wh2, c_tv, "LG", "LG-55-QLED", "LG QNED 55\" 4K Smart TV webOS", "lg-qned-55-4k", 8_950_000, 9_900_000, "/static/img/products/lg-qned-tv.jpg", {"Diagonal": "55 dyuym", "Ruxsat": "4K UHD", "Smart": "webOS 24"}, stock_qty=10, resell="LOW", rating=4.8, sales=64)
+        add_prod(store2, wh2, c_tv, "Artel", "ART-43-FHD", "Artel 43\" Full HD Android TV", "artel-43-android-tv", 3_290_000, 3_650_000, "/static/img/products/lg-qned-tv.jpg", {"Diagonal": "43 dyuym", "OS": "Google Android TV", "Kafolat": "36 oy"}, stock_qty=22, resell="LOW", rating=4.6, sales=142)
+        p_fridge = add_prod(store2, wh2, c_fridge, "Samsung", "SAM-RB38", "Samsung No Frost Inverter Sovutgich 385L", "samsung-no-frost-385", 7_850_000, 8_400_000, "/static/img/products/samsung-fridge.jpg", {"Hajm": "385 litr", "Tizim": "Total No Frost", "Sinf": "A++"}, stock_qty=7, resell="LOW", rating=4.9, sales=49)
+        add_prod(store2, wh2, c_washer, "Bosch", "BSH-WGA-8", "Bosch Serie 4 Kir yuvish mashinasi 8 kg", "bosch-serie4-8kg", 6_900_000, None, "/static/img/products/bosch-washer.jpg", {"Sig‘im": "8 kg", "Aylanish": "1200 ayl/min", "Motor": "EcoSilence"}, stock_qty=2, resell="LOW", rating=4.9, sales=37)  # Low stock alert trigger!
+        p_sofa = add_prod(store2, wh2, c_mebel, "IKEA Style", "MEB-LOFT-3", "Loft Komfort burchak divani (Velvet)", "loft-komfort-divan", 5_900_000, 6_700_000, "/static/img/products/loft-sofa.jpg", {"O‘lcham": "260 × 170 sm", "Mato": "Anti-dog‘ Velvet", "Karkas": "Qattiq yog‘och"}, stock_qty=6, resell="LOW", rating=4.7, sales=29)
+        add_prod(store2, wh2, c_realty, "Tashkent City", "RE-OFIS-01", "Tijorat ofis maydoni 45 kv.m (Faqat naqd)", "tijorat-ofis-45kvm", 680_000_000, None, "/static/img/products/commercial-office.jpg", {"Maydon": "45 kv.m", "Qavat": "3-qavat", "Nasiya": "Qonunan taqiqlangan (27.1)"}, stock_qty=1, resell="LOW", rating=5.0, sales=2)
         # Pending Moderation & Draft items for Seller/Admin workflows
-        add_prod(store1, wh1, c_laptop, "Lenovo", "LNV-LOQ-15", "Lenovo LOQ 15 RTX 4060 Gaming", "lenovo-loq-15-rtx4060", 12_900_000, None, "/static/icons/laptop.svg", {"Protsessor": "Core i7", "GPU": "RTX 4060 8GB"}, stock_qty=5, status=ProductStatus.PENDING_REVIEW, sales=0)
-        add_prod(store2, wh2, c_washer, "Artel", "ART-WM-7", "Artel 7kg Inverter Kir yuvish mashinasi", "artel-7kg-inverter", 4_100_000, None, "/static/icons/washer.svg", {"Sig‘im": "7 kg", "Inverter": "Ha"}, stock_qty=9, status=ProductStatus.PENDING_REVIEW, sales=0)
+        add_prod(store1, wh1, c_laptop, "Lenovo", "LNV-LOQ-15", "Lenovo LOQ 15 RTX 4060 Gaming", "lenovo-loq-15-rtx4060", 12_900_000, None, "/static/img/products/lenovo-thinkpad.jpg", {"Protsessor": "Core i7", "GPU": "RTX 4060 8GB"}, stock_qty=5, status=ProductStatus.PENDING_REVIEW, sales=0)
+        add_prod(store2, wh2, c_washer, "Artel", "ART-WM-7", "Artel 7kg Inverter Kir yuvish mashinasi", "artel-7kg-inverter", 4_100_000, None, "/static/img/products/bosch-washer.jpg", {"Sig‘im": "7 kg", "Inverter": "Ha"}, stock_qty=9, status=ProductStatus.PENDING_REVIEW, sales=0)
 
         # 9. Banners, Promos, Delivery Points
         Banner.objects.create(title="ZARVON Nasiya: 12 oygacha shaffof muddatli to‘lov", subtitle="Yashirin komissiyasiz, BHM×250 chegarasi ichida va istalgan vaqtda 0% jarimasiz muddatidan oldin yopish.", badge_text="2027 STANDARTI • SANDBOX", cta_label="Nasiya mahsulotlari", target_route="#catalog", theme_variant="navy", sort_order=1)
@@ -555,6 +555,34 @@ class Command(BaseCommand):
                     sent_by=coll_agent,
                     status="SENT",
                 )
+
+        studio_map = {
+            "APL-16P-256": "/static/img/products/iphone-16-pro.jpg",
+            "SAM-S25-256": "/static/img/products/galaxy-s25-ultra.jpg",
+            "SAM-A55-128": "/static/img/products/galaxy-a55.jpg",
+            "APL-MBA-M3": "/static/img/products/macbook-air-m3.jpg",
+            "LNV-TP-14": "/static/img/products/lenovo-thinkpad.jpg",
+            "LG-55-QLED": "/static/img/products/lg-qned-tv.jpg",
+            "ART-43-FHD": "/static/img/products/lg-qned-tv.jpg",
+            "SAM-RB38": "/static/img/products/samsung-fridge.jpg",
+            "BSH-WGA-8": "/static/img/products/bosch-washer.jpg",
+            "MEB-LOFT-3": "/static/img/products/loft-sofa.jpg",
+            "RE-OFIS-01": "/static/img/products/commercial-office.jpg",
+            "LNV-LOQ-15": "/static/img/products/lenovo-thinkpad.jpg",
+            "ART-WM-7": "/static/img/products/bosch-washer.jpg",
+        }
+        for sku_code, img_path in studio_map.items():
+            ProductImage.objects.filter(
+                product__sku=sku_code,
+                image_url__startswith="/static/icons/",
+            ).update(image_url=img_path)
+
+        first_banner = Banner.objects.order_by("sort_order").first()
+        if first_banner:
+            first_banner.title = "Kerakli mahsulot — qulay to‘lov bilan"
+            first_banner.subtitle = "Bir nechta bank taklifini solishtiring va o‘zingizga mos to‘lovni tanlang."
+            first_banner.cta_label = "Mahsulotlarni ko‘rish"
+            first_banner.save(update_fields=["title", "subtitle", "cta_label"])
 
         if Banner.objects.count() < 3:
             Banner.objects.get_or_create(

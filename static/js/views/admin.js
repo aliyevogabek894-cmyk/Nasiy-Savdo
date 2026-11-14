@@ -120,6 +120,31 @@ export async function renderAdminPortalView(container, refreshAuthCallback) {
                 .join("")}
             </div>
             <div class="card" style="background:var(--bg-subtle);">
+              <h3>Platforma Konversiya va Kredit Voronkasi (Funnel)</h3>
+              <div class="chart-box mb-3">
+                ${(() => {
+                  const steps = [
+                    { label: "Buyurtmalar", val: Number(d.kpis?.total_orders || d.funnel?.orders || 0), color: "#0D213F" },
+                    { label: "Bank Arizalari", val: Number(d.funnel?.credit_apps || d.kpis?.pending_apps || 0), color: "#1E4B85" },
+                    { label: "Faol Shartnomalar", val: Number(d.kpis?.active_contracts || d.funnel?.active_contracts || 0), color: "#C9A227" },
+                    { label: "To‘liq Yopilgan", val: Number(d.funnel?.completed || 0), color: "#0D6839" },
+                  ];
+                  const maxV = Math.max(1, ...steps.map((s) => s.val));
+                  return `
+                    <svg viewBox="0 0 460 120" class="chart-svg" role="img" aria-label="Voronka grafigi">
+                      ${steps
+                        .map((s, i) => {
+                          const y = 10 + i * 27;
+                          const bw = Math.max(16, Math.round((s.val / maxV) * 260));
+                          return `
+                            <text x="4" y="${y + 13}" font-size="11" fill="currentColor" font-weight="600">${s.label}</text>
+                            <rect x="135" y="${y}" width="${bw}" height="18" rx="4" fill="${s.color}"></rect>
+                            <text x="${143 + bw}" y="${y + 13}" font-size="11" fill="currentColor" font-weight="700">${s.val}</text>`;
+                        })
+                        .join("")}
+                    </svg>`;
+                })()}
+              </div>
               <h3>Customer 360 (Niqoblangan PII — 33-bo‘lim)</h3>
               <div class="table-wrap">
                 <table class="data-table text-sm tabular">

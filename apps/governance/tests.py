@@ -671,4 +671,67 @@ class UzumPspAndMarketplaceFlowTests(_DjangoTestCase):
         home = self.client.get("/api/v1/catalog/home/")
         self.assertEqual(home.status_code, 200)
         self.assertGreaterEqual(len(home.data["banners"]), 3)
+        self.assertEqual(home.data["banners"][0]["title"], "Kerakli mahsulot — qulay to‘lov bilan")
+        self.assertIn("bank_partners", home.data)
+        self.assertGreaterEqual(len(home.data["bank_partners"]), 1)
         self.assertTrue(all("delivery_badge" in p for p in home.data["new_arrivals"]))
+        self.assertTrue(
+            all(p["primary_image"].startswith("/static/img/products/") for p in home.data["new_arrivals"])
+        )
+
+    def test_seller_product_image_upload_sanitize_and_rbac_serve(self):
+        from pathlib import Path
+        from PIL import Image
+        from django.conf import settings
+
+        buf = io.BytesIO()
+        Image.new("RGBA", (80, 60), (20, 40, 80, 200)).save(buf, format="PNG")
+        png_bytes = buf.getvalue()
+
+        # Customer cannot upload seller product photos
+        forbidden = self.client.post(
+            "/api/v1/sellers/my-products/upload-image/",
+            {"image": SimpleUploadedFile("bad.png", png_bytes, content_type="image/png")},
+            format="multipart",
+        )
+        self.assertEqual(forbidden.status_code, 403)
+
+        # Authenticate as the product's store owner
+        seller_owner = self.product.store.owner
+        self.client.force_authenticate(user=seller_owner)
+
+        # Invalid binary rejected cleanly with 400
+        bad_file = self.client.post(
+            "/api/v1/sellers/my-products/upload-image/",
+            {"image": SimpleUploadedFile("corrupt.jpg", b"not-an-image", content_type="image/jpeg")},
+            format="multipart",
+        )
+        self.assertEqual(bad_file.status_code, 400)
+
+        # Valid RGBA PNG sanitized to JPEG, attached to product, and served at /media-public/
+        ok_resp = self.client.post(
+            "/api/v1/sellers/my-products/upload-image/",
+            {
+                "image": SimpleUploadedFile("studio.png", png_bytes, content_type="image/png"),
+                "product_id": str(self.product.id),
+            },
+            format="multipart",
+        )
+        self.assertEqual(ok_resp.status_code, 201)
+        img_url = ok_resp.data["image_url"]
+        self.assertTrue(img_url.startswith("/media-public/products/"))
+
+        saved_rel = img_url.replace("/media-public/", "", 1)
+        saved_disk_path = Path(settings.MEDIA_ROOT) / saved_rel
+        try:
+            serve_resp = self.client.get(img_url)
+            self.assertEqual(serve_resp.status_code, 200)
+            body = b"".join(serve_resp.streaming_content)
+            self.assertGreater(len(body), 100)
+            serve_resp.close()
+
+            trav = self.client.get("/media-public/../config/settings.py")
+            self.assertEqual(trav.status_code, 404)
+        finally:
+            if saved_disk_path.exists():
+                saved_disk_path.unlink()

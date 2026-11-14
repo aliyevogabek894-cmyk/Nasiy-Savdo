@@ -80,6 +80,11 @@ from apps.risk_collections.views import (
     RiskAssessmentsView,
     SupportTicketsView,
 )
+import mimetypes
+from pathlib import Path
+from django.conf import settings
+from django.http import FileResponse, Http404
+from django.urls import re_path
 from apps.sellers.views import (
     AdminModerationDecisionView,
     AdminModerationQueueView,
@@ -88,11 +93,21 @@ from apps.sellers.views import (
     AdminSellerInvitationView,
     SellerOnboardingSubmitView,
     SellerProductDetailView,
+    SellerProductImageUploadView,
     SellerProductsView,
     SellerStaffInviteView,
     SellerStoreCabinetView,
     SellerVerifyInviteView,
 )
+
+
+def _serve_public_media(request, path: str):
+    media_root = Path(settings.MEDIA_ROOT).resolve()
+    target = (media_root / path).resolve()
+    if not target.is_relative_to(media_root) or not target.is_file():
+        raise Http404("Fayl topilmadi.")
+    content_type, _ = mimetypes.guess_type(str(target))
+    return FileResponse(open(target, "rb"), content_type=content_type or "application/octet-stream")
 
 
 def health_check(_request):
@@ -169,7 +184,9 @@ urlpatterns = [
     path("api/v1/sellers/my-store/", SellerStoreCabinetView.as_view()),
     path("api/v1/sellers/my-store/staff/", SellerStaffInviteView.as_view()),
     path("api/v1/sellers/my-products/", SellerProductsView.as_view()),
+    path("api/v1/sellers/my-products/upload-image/", SellerProductImageUploadView.as_view()),
     path("api/v1/sellers/my-products/<uuid:pk>/", SellerProductDetailView.as_view()),
+    re_path(r"^media-public/(?P<path>.*)$", _serve_public_media),
     path("api/v1/sellers/moderation-queue/", AdminModerationQueueView.as_view()),
     path("api/v1/sellers/moderation-queue/<uuid:pk>/decide/", AdminModerationDecisionView.as_view()),
 

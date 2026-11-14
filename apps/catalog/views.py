@@ -5,11 +5,12 @@ from rest_framework import permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from django.conf import settings
 from config.permissions import HasRolePermission
 from config.utils import compute_monthly_installment, fuzzy_search_score
 from apps.catalog.models import Banner, Brand, Category, Product, ProductStatus, PromoCode, Review, Wishlist
 from apps.commerce.models import OrderItem, OrderStatus
-from apps.finance.models import InstallmentPlan
+from apps.finance.models import BankPartner, InstallmentPlan
 from apps.governance.models import AuditLog, BhmValue, ComplianceRuleVersion
 
 
@@ -110,6 +111,19 @@ class HomeMarketplaceView(APIView):
         installment_picks = [p for p in serialized if p["installment_eligible"]][:8]
         discounts = [p for p in serialized if p["discount_pct"] > 0][:8]
         newest = sorted(serialized, key=lambda x: x["sales_count"], reverse=True)[:8]
+        bank_partners = [
+            {
+                "id": str(b.id),
+                "name": b.name,
+                "code": b.code,
+                "adapter_status": b.adapter_status,
+                "uptime_pct": b.uptime_pct,
+                "avg_latency_ms": b.avg_latency_ms,
+                "base_annual_rate_pct": b.base_annual_rate_pct,
+                "max_months": b.max_months,
+            }
+            for b in BankPartner.objects.filter(is_active=True).order_by("base_annual_rate_pct", "name")
+        ]
 
         return Response(
             {
@@ -119,6 +133,8 @@ class HomeMarketplaceView(APIView):
                 "installment_picks": installment_picks,
                 "discounts": discounts,
                 "new_arrivals": newest,
+                "bank_partners": bank_partners,
+                "sandbox_mode": getattr(settings, "ZARVON_SANDBOX_MODE", True),
                 "popular_queries": ["iPhone 16", "Samsung televizor", "Noutbuk", "Kir yuvish", "Mebel", "Sovutgich"],
                 "compliance": {
                     "bhm_amount_uzs": bhm,

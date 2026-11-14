@@ -336,6 +336,17 @@ async function init() {
   applyTheme(AppState.theme);
   applyLanguage(AppState.lang);
 
+  const noticeBar = document.getElementById("top-notice-bar");
+  if (noticeBar) {
+    if (localStorage.getItem("zarvon_notice_dismissed") === "1") {
+      noticeBar.classList.add("hidden");
+    }
+    document.getElementById("btn-dismiss-notice")?.addEventListener("click", () => {
+      noticeBar.classList.add("hidden");
+      localStorage.setItem("zarvon_notice_dismissed", "1");
+    });
+  }
+
   // Compare badge init
   const cmpBadge = document.getElementById("compare-count");
   if (cmpBadge && AppState.compareIds.length) {
@@ -393,8 +404,8 @@ init();
 /* --- ZARVON Pickup Point Selector & Tactile Shell Enhancements --- */
 function setupUzumShellInteractions() {
   const labelEl = document.getElementById("header-dp-label");
-  if (labelEl && AppState.deliveryPoint?.name) {
-    labelEl.textContent = `${AppState.deliveryPoint.region} • ${AppState.deliveryPoint.name}`;
+  if (labelEl && AppState.deliveryPoint?.region) {
+    labelEl.textContent = AppState.deliveryPoint.region;
   }
 
   const dpBtn = document.getElementById("btn-delivery-point");
@@ -429,7 +440,7 @@ function setupUzumShellInteractions() {
             const chosen = { id: b.dataset.pickDp, name: b.dataset.dpName, region: b.dataset.dpReg };
             AppState.deliveryPoint = chosen;
             localStorage.setItem("zarvon_dp", JSON.stringify(chosen));
-            if (labelEl) labelEl.textContent = `${chosen.region} • ${chosen.name}`;
+            if (labelEl) labelEl.textContent = chosen.region;
             closeModal();
             showToast(`Topshirish punkti tanlandi: ${chosen.name}`, "success");
           });
@@ -441,7 +452,7 @@ function setupUzumShellInteractions() {
   }
 
   const applyViewMotion = () => {
-    const viewRoot = document.getElementById("app-view");
+    const viewRoot = document.getElementById("main-content");
     if (!viewRoot) return;
     viewRoot.classList.remove("view-enter");
     void viewRoot.offsetWidth;

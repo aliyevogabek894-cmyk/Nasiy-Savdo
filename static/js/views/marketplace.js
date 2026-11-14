@@ -12,101 +12,287 @@ const CAT_ICONS = {
   "kochmas-mulk": "🏠",
 };
 
+const STUDIO_CAT_THUMBS = {
+  smartfonlar: "/static/img/products/iphone-16-pro.jpg",
+  telefonlar: "/static/img/products/iphone-16-pro.jpg",
+  kompyuterlar: "/static/img/products/macbook-air-m3.jpg",
+  noutbuklar: "/static/img/products/macbook-air-m3.jpg",
+  "maishiy-texnika": "/static/img/products/bosch-washer.jpg",
+  "kir-yuvish": "/static/img/products/bosch-washer.jpg",
+  sovutgichlar: "/static/img/products/samsung-fridge.jpg",
+  televizorlar: "/static/img/products/lg-qned-tv.jpg",
+  mebellar: "/static/img/products/loft-sofa.jpg",
+  mebel: "/static/img/products/loft-sofa.jpg",
+  "kochmas-mulk": "/static/img/products/commercial-office.jpg",
+};
+
+function computeSimpleEstimate(price, downPct, months, annualRatePct = 24) {
+  const down = Math.round((price * downPct) / 100);
+  const principal = Math.max(0, price - down);
+  const extra = Math.round(principal * (annualRatePct / 100) * (months / 12));
+  const totalPayable = principal + extra;
+  const monthly = months > 0 ? Math.round(totalPayable / months) : 0;
+  return { down, principal, extra, totalPayable, monthly };
+}
+
+function renderBankOffersHtml(banks, principalAmount, months = 12) {
+  if (!banks || !banks.length) return "";
+  const safePrincipal = Math.max(1_000_000, Number(principalAmount || 9_600_000));
+  const minRate = Math.min(...banks.map((b) => Number(b.base_annual_rate_pct || 30)));
+  return banks
+    .map((b) => {
+      const rate = Number(b.base_annual_rate_pct || 28);
+      const effMonths = Math.min(months, Number(b.max_months || 12));
+      const est = computeSimpleEstimate(safePrincipal, 0, effMonths, rate);
+      const isBest = rate === minRate;
+      const statusCls = b.adapter_status === "ONLINE" ? "badge-success" : "badge-warning";
+      return `
+        <article class="bank-offer-card ${isBest ? "bank-offer-best" : ""}">
+          <div class="flex-between">
+            <strong style="font-size:1rem;">🏦 ${esc(b.name)}</strong>
+            <span class="badge ${statusCls}">${esc(b.adapter_status)}</span>
+          </div>
+          <div class="flex-between text-xs text-muted">
+            <span>Yillik stavka: <strong style="color:var(--text-primary);">${rate}%</strong></span>
+            <span>Maks: <strong>${b.max_months} oy</strong></span>
+          </div>
+          <div class="tabular" style="padding:8px 10px;border-radius:10px;background:var(--bg-subtle);">
+            <div class="text-xs text-muted">${effMonths} oylik taxminiy to‘lov:</div>
+            <div class="fw-bold" style="font-size:1.08rem;">${fmtUzs(est.monthly)} / oy</div>
+          </div>
+          <div class="flex-between mt-auto pt-1">
+            ${isBest ? `<span class="badge badge-gold">★ Eng past foiz</span>` : `<span class="text-xs text-muted">SLA: ${b.uptime_pct}%</span>`}
+            <a href="#customer/banks" class="btn btn-outline btn-sm">Ariza holati →</a>
+          </div>
+        </article>`;
+    })
+    .join("");
+}
+
 export async function renderHomeView(container, reloadCartBadge) {
   const data = await apiFetch("/api/v1/catalog/home/");
   const banners = data.banners && data.banners.length
     ? data.banners
     : [
         {
-          badge_text: "SANDBOX DEMO",
-          title: "ZARVON Nasiya: 12 oygacha shaffof muddatli to‘lov",
-          subtitle: "Yashirin komissiyasiz, 250 BHM chegarasi ichida va istalgan vaqtda 0% jarimasiz yopish.",
-          cta_label: "Katalogga o‘tish",
+          badge_text: "ZARVON NASIYA",
+          title: "Kerakli mahsulot — qulay to‘lov bilan",
+          subtitle: "Bir nechta bank taklifini solishtiring va o‘zingizga mos to‘lovni tanlang.",
+          cta_label: "Mahsulotlarni ko‘rish",
           target_route: "#catalog",
           theme_variant: "navy",
         },
       ];
 
-  container.innerHTML = `
-    <nav class="cat-pill-bar" aria-label="Tezkor kategoriyalar">
-      <a href="#catalog" class="cat-pill active">✨ Barcha tovarlar</a>
-      ${data.categories
-        .map(
-          (c) => `
-        <a href="#catalog?category=${esc(c.slug)}" class="cat-pill" data-cat-slug="${esc(c.slug)}">
-          <span>${CAT_ICONS[c.slug] || "🛍"}</span>
-          <span>${esc(c.name)}</span>
-          ${!c.installment_allowed ? `<span class="cat-pill-dot-cash">Faqat naqd</span>` : ""}
-        </a>`
-        )
-        .join("")}
-    </nav>
+  const slideVisuals = [
+    "/static/img/hero-showcase.jpg",
+    "/static/img/products/iphone-16-pro.jpg",
+    "/static/img/products/macbook-air-m3.jpg",
+  ];
 
-    <section class="hero-carousel-grid" aria-label="Kampaniya bannerlari">
-      <div class="hero-carousel" id="hero-carousel">
-        <div class="hero-track" id="hero-track">
-          ${banners
-            .map(
-              (b) => `
-            <div class="hero-slide ${b.theme_variant === "gold" ? "gold-variant" : ""}">
-              <span class="hero-badge" style="width:fit-content;">${esc(b.badge_text)}</span>
-              <h1>${esc(b.title)}</h1>
-              <p>${esc(b.subtitle)}</p>
-              <div class="flex-gap">
-                <a href="${esc(b.target_route || "#catalog")}" class="btn ${b.theme_variant === "gold" ? "btn-primary" : "btn-gold"}">${esc(b.cta_label || "Katalogni ochish")} →</a>
-                <a href="#calculator" class="btn btn-outline" style="${b.theme_variant === "gold" ? "" : "background:rgba(255,255,255,0.12);color:#fff;border-color:rgba(255,255,255,0.38);"}">
-                  Nasiya kalkulyatori
-                </a>
-              </div>
-              <div class="flex-gap mt-4 text-xs" style="opacity:0.9;">
-                <span>✓ Muddat ≤ ${data.compliance.max_months} oy</span>
-                <span>✓ Maksimal xarid: ${fmtUzs(data.compliance.max_bhm_limit)} (250 BHM)</span>
-                <span>✓ Erta to‘lov: 0% jarima</span>
-              </div>
-            </div>`
-            )
-            .join("")}
+  const eligibleCats = (data.categories || []).filter((c) => c.installment_allowed !== false);
+  const cashOnlyCats = (data.categories || []).filter((c) => c.installment_allowed === false);
+  const topFiveCats = eligibleCats.slice(0, 5);
+
+  const popularPool = (data.installment_picks && data.installment_picks.length
+    ? data.installment_picks
+    : data.new_arrivals || []
+  ).slice(0, 4);
+
+  const bankPartners = data.bank_partners || [];
+  const initCalc = computeSimpleEstimate(11_990_000, 20, 12, 0);
+
+  container.innerHTML = `
+    <!-- 1. Luxury Full-Width Navy Hero Banner -->
+    <section class="hero-luxury-wrap" aria-label="Asosiy banner">
+      <div class="hero-luxury-card" id="hero-carousel">
+        <div class="hero-luxury-content">
+          <div class="hero-badge" id="hero-slide-badge" style="width:fit-content;">${esc(banners[0].badge_text || "ZARVON FINTECH")}</div>
+          <h1 id="hero-slide-title">${esc(banners[0].title)}</h1>
+          <p id="hero-slide-sub">${esc(banners[0].subtitle)}</p>
+          <div class="hero-luxury-actions">
+            <a id="hero-slide-cta" href="${esc(banners[0].target_route || "#catalog")}" class="btn btn-gold">
+              🛒 ${esc(banners[0].cta_label || "Mahsulotlarni ko‘rish")} ›
+            </a>
+            <a href="#calculator" class="btn-hero-ghost">🧮 Nasiya hisoblash</a>
+          </div>
+        </div>
+        <div class="hero-luxury-visual">
+          <img id="hero-slide-img" src="${slideVisuals[0]}" alt="ZARVON elektronika va maishiy texnika kolleksiyasi">
         </div>
         ${
           banners.length > 1
-            ? `
-          <button type="button" class="hero-nav-btn hero-nav-prev" id="hero-prev" aria-label="Oldingi slayd">‹</button>
-          <button type="button" class="hero-nav-btn hero-nav-next" id="hero-next" aria-label="Keyingi slayd">›</button>
-          <div class="hero-dots" id="hero-dots">
-            ${banners.map((_, idx) => `<button type="button" class="hero-dot ${idx === 0 ? "active" : ""}" data-hero-dot="${idx}" aria-label="${idx + 1}-slayd"></button>`).join("")}
-          </div>`
+            ? `<div class="hero-luxury-dots" id="hero-dots">
+                 ${banners.map((_, idx) => `<button type="button" class="hero-dot ${idx === 0 ? "active" : ""}" data-hero-dot="${idx}" aria-label="${idx + 1}-slayd"></button>`).join("")}
+               </div>`
             : ""
         }
       </div>
+    </section>
 
-      <aside class="hero-side-card">
+    <!-- 2. Overlapping 5-Card Floating Category Strip -->
+    <section class="cat-float-wrap" aria-label="Asosiy toifalar">
+      <div class="cat-float-grid">
+        ${topFiveCats
+          .map((c) => {
+            const thumb = STUDIO_CAT_THUMBS[c.slug] || "/static/img/products/iphone-16-pro.jpg";
+            return `
+            <a href="#catalog?category=${esc(c.slug)}" class="cat-float-card">
+              <div class="cat-float-thumb">
+                <img src="${esc(thumb)}" alt="${esc(c.name)}" loading="lazy">
+              </div>
+              <div class="cat-float-name">
+                <span>${esc(c.name)}</span>
+                <span aria-hidden="true" style="color:var(--text-muted);">›</span>
+              </div>
+            </a>`;
+          })
+          .join("")}
+      </div>
+      ${
+        cashOnlyCats.length
+          ? `<div class="flex-gap mt-2" style="padding:0 4px;">
+               <span class="text-xs text-muted">Qo‘shimcha toifalar:</span>
+               ${cashOnlyCats
+                 .map((c) => `<a href="#catalog?category=${esc(c.slug)}" class="quick-chip-link">${esc(c.name)} (Faqat naqd)</a>`)
+                 .join("")}
+             </div>`
+          : ""
+      }
+    </section>
+
+    <!-- 3. 3-Column Divided Trust Bar -->
+    <section class="trust-bar-3" aria-label="Platforma afzalliklari">
+      <div class="trust-item">
+        <div class="trust-icon-box" aria-hidden="true">▤</div>
         <div>
-          <span class="badge badge-navy">1 DAQIQADA SKORING</span>
-          <h3 class="mt-2" style="margin-bottom:6px;">KATM + MIB + 50% DSTI limitini tekshiring</h3>
-          <p class="text-xs text-secondary" style="margin:0 0 12px;">
-            Boshqa bank/nasiya kreditlaringiz, MIB ijro holati va xavfsiz oylik to‘lov yukingiz bir zumda hisoblanadi.
-          </p>
-          <a href="#customer/kyc" class="btn btn-gold btn-sm" style="width:100%;justify-content:center;">⚡ Limitni hozir bilish →</a>
+          <strong style="font-size:0.95rem;">Bank takliflarini solishtirish</strong>
+          <div class="text-xs text-muted">Bir nechta hamkor taklifini ko‘rib chiqing.</div>
         </div>
+      </div>
+      <div class="trust-item">
+        <div class="trust-icon-box" aria-hidden="true">📅</div>
         <div>
-          <div class="text-xs fw-bold text-muted mb-2">Ommabop qidiruvlar:</div>
-          <div class="quick-search-chips">
-            ${(data.popular_queries || [])
-              .map((q) => `<button type="button" class="quick-chip-link" data-quick-search="${esc(q)}">${esc(q)}</button>`)
-              .join("")}
+          <strong style="font-size:0.95rem;">Shaffof to‘lov jadvali</strong>
+          <div class="text-xs text-muted">Barcha to‘lovlar oldindan ko‘rsatiladi.</div>
+        </div>
+      </div>
+      <div class="trust-item">
+        <div class="trust-icon-box" aria-hidden="true">🛡</div>
+        <div>
+          <strong style="font-size:0.95rem;">Himoyalangan xarid</strong>
+          <div class="text-xs text-muted">Xavfsiz to‘lov va buyurtma nazorati.</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 4. Split Section: Ommabop mahsulotlar + Live Nasiya Kalkulyatori -->
+    <section class="home-featured-split" aria-label="Ommabop mahsulotlar va kalkulyator">
+      <div>
+        <div class="flex-between mb-3">
+          <div>
+            <h2 style="margin:0;">Ommabop mahsulotlar</h2>
+            <span class="text-xs text-muted">Naqd va oylik nasiya shartlari ochiq ko‘rsatilgan eng ko‘p tanlangan tovarlar</span>
+          </div>
+          <a href="#catalog" class="fw-bold text-sm" style="color:var(--navy-700);">Barchasini ko‘rish ›</a>
+        </div>
+        <div class="featured-4-grid">
+          ${popularPool.map(renderProductCard).join("")}
+        </div>
+      </div>
+
+      <!-- Interactive Live Embedded Calculator Widget -->
+      <aside class="calc-widget-card" aria-label="Nasiya kalkulyatori vidjeti">
+        <div class="calc-widget-head">
+          <div class="calc-widget-head-title">
+            <span aria-hidden="true">🧮</span>
+            <span>Nasiya kalkulyatori</span>
+          </div>
+          <span class="calc-badge-pill">Taxminiy hisob</span>
+        </div>
+        <div class="calc-widget-body">
+          <div class="form-group mb-3">
+            <label class="form-label text-xs" for="hc-price">Mahsulot narxi</label>
+            <div class="calc-price-wrap">
+              <input id="hc-price" type="number" class="tabular" value="11990000" min="300000" max="500000000" step="100000">
+              <span class="calc-price-unit">so‘m</span>
+            </div>
+          </div>
+
+          <div class="form-group mb-3">
+            <div class="flex-between mb-1">
+              <label class="form-label text-xs" for="hc-down-pct" style="margin:0;">Boshlang‘ich to‘lov</label>
+              <strong id="hc-down-uzs" class="tabular text-xs" style="color:var(--navy-700);">= ${fmtUzs(initCalc.down)}</strong>
+            </div>
+            <div class="flex-gap" style="align-items:center;">
+              <select id="hc-down-pct" class="form-control" style="max-width:110px;min-height:38px;">
+                <option value="0">0%</option>
+                <option value="10">10%</option>
+                <option value="15">15%</option>
+                <option value="20" selected>20%</option>
+                <option value="30">30%</option>
+                <option value="40">40%</option>
+                <option value="50">50%</option>
+                <option value="60">60%</option>
+              </select>
+              <input id="hc-down-slider" type="range" class="zarvon-range" min="0" max="60" step="5" value="20">
+            </div>
+          </div>
+
+          <div class="form-group mb-2">
+            <label class="form-label text-xs">Muddat</label>
+            <div class="calc-term-grid" id="hc-term-grid">
+              <button type="button" class="calc-term-btn" data-hc-months="3">3 oy</button>
+              <button type="button" class="calc-term-btn" data-hc-months="6">6 oy</button>
+              <button type="button" class="calc-term-btn" data-hc-months="9">9 oy</button>
+              <button type="button" class="calc-term-btn active" data-hc-months="12">12 oy</button>
+              <button type="button" class="calc-term-btn" data-hc-months="18">18 oy</button>
+              <button type="button" class="calc-term-btn" data-hc-months="24">24 oy</button>
+            </div>
+          </div>
+
+          <div class="calc-result-banner">
+            <div>
+              <div class="text-xs fw-bold">📅 Taxminiy oylik to‘lov</div>
+              <div id="hc-mode-note" class="text-xs" style="opacity:0.82;">2027 Standarti • Qoldiq: ${fmtUzs(initCalc.principal)}</div>
+            </div>
+            <strong id="hc-monthly-out" class="tabular">${fmtUzs(initCalc.monthly)}</strong>
+          </div>
+
+          <div class="flex-between mt-3">
+            <span class="text-xs text-muted">0% jarimasiz erta yopish</span>
+            <a href="#calculator" class="fw-bold text-xs" style="color:var(--navy-700);">Batafsil jadval →</a>
           </div>
         </div>
       </aside>
     </section>
 
-    <!-- Chegirmalar Horizontal Snap Showcase -->
+    <!-- 5. Multi-Bank Offers Comparison -->
+    ${
+      bankPartners.length
+        ? `<section class="mt-6" aria-label="Hamkor banklar takliflari">
+             <div class="flex-between mb-3">
+               <div>
+                 <h2 style="margin:0;">🏦 Banklarning nasiya takliflarini solishtiring</h2>
+                 <p class="text-xs text-muted" style="margin:2px 0 0;">Yuqoridagi kalkulyator summasi (${fmtUzs(initCalc.principal)}) bo‘yicha real vaqtda yangilanadigan taxminiy bank takliflari</p>
+               </div>
+               <a href="#customer/kyc" class="btn btn-gold btn-sm">⚡ Shaxsiy limitimni tekshirish</a>
+             </div>
+             <div id="home-bank-offers" class="bank-offer-grid">
+               ${renderBankOffersHtml(bankPartners, initCalc.principal, 12)}
+             </div>
+           </section>`
+        : ""
+    }
+
+    <!-- 6. Hafta Chegirmalari Horizontal Strip -->
     ${
       data.discounts.length
         ? `<section class="mt-6">
              <div class="flex-between mb-3">
                <div>
-                 <h2 style="margin-bottom:2px;">🔥 Hafta chegirmalari</h2>
-                 <span class="text-xs text-muted">Asl eski narx tarixi va chegirmali takliflar</span>
+                 <h2 style="margin-bottom:2px;">🔥 Maxsus chegirmalar</h2>
+                 <span class="text-xs text-muted">Shaffof eski narx tarixi va chegirmali takliflar</span>
                </div>
                <a href="#catalog?sort=popular" class="btn btn-outline btn-sm">Barchasi →</a>
              </div>
@@ -117,75 +303,72 @@ export async function renderHomeView(container, reloadCartBadge) {
         : ""
     }
 
-    <!-- "Oyiga ... so'mdan" Curated 5-Col Grid -->
-    <section class="mt-6">
-      <div class="flex-between mb-3">
+    <!-- 7. KATM + MIB Skoring CTA & Payment Gateways -->
+    <section class="mt-6 card card-elevated" style="background:linear-gradient(125deg, #0d213f 0%, #193b68 100%);color:#ffffff;border:1px solid rgba(219,182,59,0.45);">
+      <div class="flex-between" style="flex-wrap:wrap;gap:14px;">
         <div>
-          <h2>“Oyiga … so‘mdan” — Shaffof nasiya tanlovi</h2>
-          <p class="text-sm text-muted" style="margin:0;">Har bir kartada muddat, jami to‘lov summasi va indikativ belgi ochiq ko‘rsatiladi (28.3).</p>
+          <div class="psp-trust-strip" style="background:transparent;border:none;padding:0 0 8px;color:#cbd5e1;">
+            <span class="psp-chip psp-chip-payme">Payme</span>
+            <span class="psp-chip psp-chip-click">Click</span>
+            <span class="psp-chip psp-chip-uzum">Uzum Bank</span>
+            <span class="psp-chip psp-chip-paynet">Paynet</span>
+            <span class="psp-chip">🛡 KATM + MIB Skoring</span>
+          </div>
+          <h2 style="color:#ffffff;margin:0 0 4px;">INN / PINFL orqali 1 daqiqada shaxsiy nasiya limitini biling</h2>
+          <div class="text-sm" style="color:#cbd5e1;">Boshqa banklardagi kredit yuklamasi, MIB ijro qarzlari va Markaziy Bankning 50% DSTI mezoni mijoz roziligi bilan tekshiriladi.</div>
         </div>
-        <a href="#catalog?installment_only=true&sort=monthly_asc" class="btn btn-outline btn-sm">Barcha nasiya tovarlari →</a>
-      </div>
-      <div class="uzum-grid">
-        ${data.installment_picks.map(renderProductCard).join("")}
-      </div>
-    </section>
-
-    <!-- New / Popular Arrivals 5-Col Grid -->
-    <section class="mt-6">
-      <div class="flex-between mb-3">
-        <h2>🏆 Ommabop va yangi mahsulotlar</h2>
-        <a href="#catalog" class="btn btn-outline btn-sm">Katalogga o‘tish →</a>
-      </div>
-      <div class="uzum-grid">
-        ${data.new_arrivals.map(renderProductCard).join("")}
+        <div class="flex-gap">
+          <a href="#customer/kyc" class="btn btn-gold">⚡ Limitni tekshirish →</a>
+          <a href="#seller-onboarding" class="btn-hero-ghost">🏪 Sotuvchi bo‘lish</a>
+        </div>
       </div>
     </section>
 
-    <!-- Consumer Protection & Trust Block (Section 30.3 & 27.1) -->
-    <section class="mt-6 card" style="border-left:5px solid var(--gold-500);">
-      <h2>ZARVON Ishonch va Mijoz Himoyasi Kafolatlari</h2>
-      <div class="grid-4 mt-3">
+    <!-- 8. 6-Qadamli Nasiya Xarid Jarayoni -->
+    <section class="mt-6 card">
+      <div class="flex-between mb-3">
         <div>
-          <h4>🛡 12 oy &amp; 250 BHM Chegarasi</h4>
-          <p class="text-sm text-secondary">Muddatli to‘lov shartnomalari 12 oydan va 250 BHMdan oshmaydi. Yillik ustama+jarima 50% bilan cheklangan.</p>
+          <h2 style="margin:0;">Nasiya bilan xarid qilish — 6 oddiy qadamda</h2>
+          <span class="text-xs text-muted">To‘lovga yaqin qolganda kabinet va avtomatik xabarnomalar orqali eslatiladi</span>
         </div>
-        <div>
-          <h4>💳 0% Erta To‘lov Jarimasi</h4>
-          <p class="text-sm text-secondary">Istalgan vaqtda qisman yoki to‘liq muddatidan oldin yopish mumkin — qo‘shimcha komissiya olinmaydi.</p>
-        </div>
-        <div>
-          <h4>📦 OTP-kod bilan Topshirish</h4>
-          <p class="text-sm text-secondary">Tovar kuryer yoki punktda shaxsiy OTP kod bilan topshirilgandan keyingina to‘lov jadvali faollashadi.</p>
-        </div>
-        <div>
-          <h4>⚖ Tez Qaytarish va Apellyatsiya</h4>
-          <p class="text-sm text-secondary">Shikoyatlar va skoring qarorlariga kabinetdan to‘g‘ridan-to‘g‘ri apellyatsiya yuborish huquqi.</p>
-        </div>
+      </div>
+      <div class="how-strip-grid" style="grid-template-columns:repeat(auto-fit,minmax(170px,1fr));">
+        <div class="how-step-card"><span class="how-step-num">1</span><strong>Mahsulot tanlash</strong><div class="text-xs text-secondary">Naqd narx va oylik to‘lovni solishtiring.</div></div>
+        <div class="how-step-card"><span class="how-step-num">2</span><strong>Nasiya hisoblash</strong><div class="text-xs text-secondary">Boshlang‘ich to‘lov va qulay muddatni tanlang.</div></div>
+        <div class="how-step-card"><span class="how-step-num">3</span><strong>Ariza va rozilik</strong><div class="text-xs text-secondary">PINFL/INN kiritilib KATM + MIB roziligi beriladi.</div></div>
+        <div class="how-step-card"><span class="how-step-num">4</span><strong>Bank takliflari</strong><div class="text-xs text-secondary">Hamkor banklarning shartlarini taqqoslang.</div></div>
+        <div class="how-step-card"><span class="how-step-num">5</span><strong>Elektron shartnoma</strong><div class="text-xs text-secondary">Tasdiqlangan jadval asosida SMS/OTP imzolash.</div></div>
+        <div class="how-step-card"><span class="how-step-num">6</span><strong>Mahsulotni olish</strong><div class="text-xs text-secondary">Kuryer yoki topshirish punktidan tez yetkazish.</div></div>
       </div>
     </section>
   `;
 
+  // Hero Carousel
   if (banners.length > 1) {
     let slideIdx = 0;
-    const track = document.getElementById("hero-track");
-    const carousel = document.getElementById("hero-carousel");
+    const titleEl = document.getElementById("hero-slide-title");
+    const subEl = document.getElementById("hero-slide-sub");
+    const badgeEl = document.getElementById("hero-slide-badge");
+    const ctaEl = document.getElementById("hero-slide-cta");
+    const imgEl = document.getElementById("hero-slide-img");
     const dots = Array.from(document.querySelectorAll("[data-hero-dot]"));
+
     const goSlide = (n) => {
       slideIdx = ((n % banners.length) + banners.length) % banners.length;
-      if (track) track.style.transform = `translateX(-${slideIdx * 100}%)`;
+      const b = banners[slideIdx];
+      if (titleEl) titleEl.textContent = b.title;
+      if (subEl) subEl.textContent = b.subtitle;
+      if (badgeEl) badgeEl.textContent = b.badge_text || "ZARVON";
+      if (ctaEl) {
+        ctaEl.href = b.target_route || "#catalog";
+        ctaEl.textContent = `🛒 ${b.cta_label || "Ko‘rish"} ›`;
+      }
+      if (imgEl) imgEl.src = slideVisuals[slideIdx % slideVisuals.length];
       dots.forEach((d, idx) => d.classList.toggle("active", idx === slideIdx));
     };
-    document.getElementById("hero-prev")?.addEventListener("click", () => goSlide(slideIdx - 1));
-    document.getElementById("hero-next")?.addEventListener("click", () => goSlide(slideIdx + 1));
-    dots.forEach((d) => d.addEventListener("click", () => goSlide(Number(d.dataset.heroDot))));
 
-    let timer = setInterval(() => goSlide(slideIdx + 1), 5000);
-    carousel?.addEventListener("mouseenter", () => clearInterval(timer));
-    carousel?.addEventListener("mouseleave", () => {
-      clearInterval(timer);
-      timer = setInterval(() => goSlide(slideIdx + 1), 5000);
-    });
+    dots.forEach((d) => d.addEventListener("click", () => goSlide(Number(d.dataset.heroDot))));
+    let timer = setInterval(() => goSlide(slideIdx + 1), 5500);
     const stopTimer = () => {
       clearInterval(timer);
       window.removeEventListener("hashchange", stopTimer);
@@ -193,11 +376,71 @@ export async function renderHomeView(container, reloadCartBadge) {
     window.addEventListener("hashchange", stopTimer);
   }
 
-  container.querySelectorAll("[data-quick-search]").forEach((btn) => {
+  // Live Embedded Home Calculator Widget Wiring
+  const hcPriceEl = document.getElementById("hc-price");
+  const hcPctSel = document.getElementById("hc-down-pct");
+  const hcPctSlider = document.getElementById("hc-down-slider");
+  const hcDownUzs = document.getElementById("hc-down-uzs");
+  const hcMonthlyOut = document.getElementById("hc-monthly-out");
+  const hcModeNote = document.getElementById("hc-mode-note");
+  const bankGridEl = document.getElementById("home-bank-offers");
+  let activeMonths = 12;
+  let calcDebounce = null;
+
+  const updateHomeCalc = (sourcePct) => {
+    const price = Math.max(300_000, Number(hcPriceEl?.value || 0));
+    const pct = Math.min(60, Math.max(0, Number(sourcePct ?? hcPctSel?.value ?? 20)));
+    if (hcPctSel && Number(hcPctSel.value) !== pct) hcPctSel.value = String(pct);
+    if (hcPctSlider && Number(hcPctSlider.value) !== pct) hcPctSlider.value = String(pct);
+
+    const est = computeSimpleEstimate(price, pct, activeMonths, activeMonths <= 12 ? 0 : 26);
+    if (hcDownUzs) hcDownUzs.textContent = `= ${fmtUzs(est.down)}`;
+    if (hcMonthlyOut) hcMonthlyOut.textContent = fmtUzs(est.monthly);
+    if (hcModeNote) {
+      hcModeNote.textContent =
+        activeMonths <= 12
+          ? `2027 Standarti • Qoldiq: ${fmtUzs(est.principal)}`
+          : `Hamkor bank krediti (indikativ) • Qoldiq: ${fmtUzs(est.principal)}`;
+    }
+    if (bankGridEl && bankPartners.length) {
+      bankGridEl.innerHTML = renderBankOffersHtml(bankPartners, est.principal, activeMonths);
+    }
+
+    if (activeMonths <= 12) {
+      clearTimeout(calcDebounce);
+      calcDebounce = setTimeout(async () => {
+        try {
+          const q = await apiFetch("/api/v1/finance/calculator/", {
+            method: "POST",
+            body: JSON.stringify({
+              price,
+              down_payment: est.down,
+              months: activeMonths,
+              category_installment_allowed: true,
+            }),
+          });
+          if (hcMonthlyOut) hcMonthlyOut.textContent = fmtUzs(q.monthly_payment);
+          if (hcModeNote) {
+            hcModeNote.textContent = `✓ Compliance Guard (${q.annualized_extra_pct}%/yil) • Qoldiq: ${fmtUzs(q.principal)}`;
+          }
+        } catch {
+          /* Keep clean indicative estimate if above 250 BHM cap */
+        }
+      }, 220);
+    }
+  };
+
+  hcPriceEl?.addEventListener("input", () => updateHomeCalc());
+  hcPctSel?.addEventListener("change", () => updateHomeCalc(hcPctSel.value));
+  hcPctSlider?.addEventListener("input", () => updateHomeCalc(hcPctSlider.value));
+  document.querySelectorAll("[data-hc-months]").forEach((btn) => {
     btn.addEventListener("click", () => {
-      location.hash = `#catalog?q=${encodeURIComponent(btn.dataset.quickSearch)}`;
+      activeMonths = Number(btn.dataset.hcMonths);
+      document.querySelectorAll("[data-hc-months]").forEach((b) => b.classList.toggle("active", b === btn));
+      updateHomeCalc();
     });
   });
+
   wireProductCardActions(container, reloadCartBadge);
 }
 
@@ -636,8 +879,55 @@ export async function renderProductDetailView(container, slug, reloadCartBadge) 
   wireProductCardActions(container, reloadCartBadge);
 }
 
+function buildAmortizationSvg(schedule, principalTotal, extraTotal) {
+  if (!schedule || !schedule.length) return "";
+  const w = 520;
+  const h = 150;
+  const padX = 16;
+  const maxBarH = 112;
+  const barGap = 8;
+  const count = schedule.length;
+  const barW = Math.max(12, Math.floor((w - padX * 2 - barGap * (count - 1)) / count));
+  const perExtra = Math.round(extraTotal / count);
+  const perPrincipal = Math.round(principalTotal / count);
+  const maxVal = Math.max(1, perPrincipal + perExtra);
+
+  const bars = schedule
+    .map((row, i) => {
+      const x = padX + i * (barW + barGap);
+      const totalH = Math.max(16, Math.round((row.amount / maxVal) * maxBarH));
+      const extraH = Math.max(3, Math.round((perExtra / maxVal) * maxBarH));
+      const prinH = Math.max(6, totalH - extraH);
+      const yPrin = 126 - prinH;
+      const yExtra = yPrin - extraH;
+      return `
+        <g>
+          <title>${row.installment_no}-oy: Asosiy ${fmtUzs(perPrincipal)} + Ustama ${fmtUzs(perExtra)}</title>
+          <rect x="${x}" y="${yExtra}" width="${barW}" height="${extraH}" rx="3" fill="#C9A227"></rect>
+          <rect x="${x}" y="${yPrin}" width="${barW}" height="${prinH}" rx="3" fill="#0D213F"></rect>
+          <text x="${x + barW / 2}" y="143" text-anchor="middle" font-size="10" fill="currentColor" opacity="0.7">${row.installment_no}-oy</text>
+        </g>`;
+    })
+    .join("");
+
+  return `
+    <div class="chart-box mb-3">
+      <div class="flex-between mb-2">
+        <strong class="text-sm">📊 Oylik Amortizatsiya Tahlili (Asosiy qarz vs Ustama)</strong>
+        <div class="flex-gap text-xs">
+          <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#0D213F;"></span> Asosiy</span>
+          <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#C9A227;"></span> Ustama</span>
+        </div>
+      </div>
+      <svg viewBox="0 0 ${w} ${h}" class="chart-svg" role="img" aria-label="Amortizatsiya grafigi">${bars}</svg>
+    </div>`;
+}
+
 export async function renderCalculatorView(container) {
-  const comp = await apiFetch("/api/v1/governance/compliance/");
+  const [comp, homeData] = await Promise.all([
+    apiFetch("/api/v1/governance/compliance/"),
+    apiFetch("/api/v1/catalog/home/").catch(() => ({ bank_partners: [] })),
+  ]);
   container.innerHTML = `
     <div class="grid-2" style="align-items:start;">
       <div class="card card-elevated">
@@ -651,24 +941,30 @@ export async function renderCalculatorView(container) {
 
         <form id="standalone-calc-form" class="mt-3">
           <div class="form-group">
-            <label class="form-label" for="sc-price">Mahsulot narxi (so‘m)</label>
-            <input id="sc-price" type="number" class="form-control tabular" value="8500000" min="300000" step="100000">
+            <div class="flex-between">
+              <label class="form-label" for="sc-price">Mahsulot narxi (so‘m)</label>
+              <span class="text-xs text-muted">300 000 – 100 000 000</span>
+            </div>
+            <input id="sc-price" type="number" class="form-control tabular" value="12000000" min="300000" step="100000">
+            <input id="sc-price-range" type="range" class="zarvon-range" min="500000" max="50000000" step="250000" value="12000000">
           </div>
-          <div class="grid-2">
-            <div class="form-group">
+          <div class="form-group">
+            <div class="flex-between">
               <label class="form-label" for="sc-down">Boshlang‘ich to‘lov (so‘m)</label>
-              <input id="sc-down" type="number" class="form-control tabular" value="500000" min="0" step="100000">
+              <span id="sc-down-pct-lbl" class="badge badge-navy">20%</span>
             </div>
-            <div class="form-group">
-              <label class="form-label" for="sc-months">Muddat (oy)</label>
-              <select id="sc-months" class="form-control">
-                <option value="3">3 oy</option>
-                <option value="6">6 oy</option>
-                <option value="9">9 oy</option>
-                <option value="12" selected>12 oy</option>
-                <option value="18">18 oy (Compliance Guard test!)</option>
-              </select>
-            </div>
+            <input id="sc-down" type="number" class="form-control tabular" value="2400000" min="0" step="100000">
+            <input id="sc-down-range" type="range" class="zarvon-range" min="0" max="60" step="5" value="20">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="sc-months">Muddat (oy)</label>
+            <select id="sc-months" class="form-control">
+              <option value="3">3 oy</option>
+              <option value="6">6 oy</option>
+              <option value="9">9 oy</option>
+              <option value="12" selected>12 oy (ZARVON Compliance)</option>
+              <option value="18">18 oy (Compliance Guard test!)</option>
+            </select>
           </div>
           <div class="form-group">
             <label class="flex-gap" style="cursor:pointer;">
@@ -676,7 +972,7 @@ export async function renderCalculatorView(container) {
               <span class="text-sm fw-bold">Nasiyaga ruxsat etilgan toifa (ko‘chmas mulk emas)</span>
             </label>
           </div>
-          <button type="submit" class="btn btn-primary" style="width:100%;">Hisoblash va Tekshirish</button>
+          <button type="submit" class="btn btn-primary" style="width:100%;">Hisoblash va Jadvalni Yangilash</button>
         </form>
       </div>
 
@@ -687,30 +983,51 @@ export async function renderCalculatorView(container) {
     </div>
   `;
 
+  const scPrice = document.getElementById("sc-price");
+  const scPriceRange = document.getElementById("sc-price-range");
+  const scDown = document.getElementById("sc-down");
+  const scDownRange = document.getElementById("sc-down-range");
+  const scPctLbl = document.getElementById("sc-down-pct-lbl");
+
   const calc = async () => {
     const resEl = document.getElementById("sc-result");
     try {
       const q = await apiFetch("/api/v1/finance/calculator/", {
         method: "POST",
         body: JSON.stringify({
-          price: Number(document.getElementById("sc-price").value),
-          down_payment: Number(document.getElementById("sc-down").value),
+          price: Number(scPrice.value),
+          down_payment: Number(scDown.value),
           months: Number(document.getElementById("sc-months").value),
           category_installment_allowed: document.getElementById("sc-cat-ok").checked,
         }),
       });
       resEl.innerHTML = `
         <div class="flex-between mb-3">
-          <h3 style="margin:0;">Natija (${q.months} oy)</h3>
+          <h3 style="margin:0;">Oylik to‘lov (${q.months} oy)</h3>
           <span class="badge badge-success">✓ Compliance Guard o‘tdi</span>
         </div>
-        <div class="grid-2 tabular mb-3">
-          <div class="kpi-card"><div class="kpi-label">Oylik to‘lov</div><div class="kpi-value">${fmtUzs(q.monthly_payment)}</div></div>
-          <div class="kpi-card"><div class="kpi-label">Jami to‘lov (boshlang‘ichsiz)</div><div class="kpi-value">${fmtUzs(q.total_payable)}</div></div>
-          <div class="kpi-card"><div class="kpi-label">Asosiy summa</div><div class="kpi-value">${fmtUzs(q.principal)}</div></div>
-          <div class="kpi-card"><div class="kpi-label">Ustama + Komissiya (${q.annualized_extra_pct}%/yil)</div><div class="kpi-value">${fmtUzs(q.total_extra)}</div></div>
+        <div class="calc-result-banner mb-3" style="margin-top:0;">
+          <div>
+            <div class="text-xs fw-bold">HAR OYLIK TO‘LOV</div>
+            <div class="text-xs">Erta yopish jarimasi: 0%</div>
+          </div>
+          <strong class="tabular">${fmtUzs(q.monthly_payment)}</strong>
         </div>
-        <div class="table-wrap" style="max-height:300px;overflow-y:auto;">
+        <div class="grid-3 tabular mb-3">
+          <div class="kpi-card"><div class="kpi-label">Asosiy summa</div><div class="kpi-value" style="font-size:1.15rem;">${fmtUzs(q.principal)}</div></div>
+          <div class="kpi-card"><div class="kpi-label">Ustama (${q.annualized_extra_pct}%/yil)</div><div class="kpi-value" style="font-size:1.15rem;">${fmtUzs(q.total_extra)}</div></div>
+          <div class="kpi-card"><div class="kpi-label">Jami to‘lov</div><div class="kpi-value" style="font-size:1.15rem;">${fmtUzs(q.total_payable)}</div></div>
+        </div>
+        ${buildAmortizationSvg(q.preview_schedule, q.principal, q.total_extra)}
+        ${
+          (homeData.bank_partners || []).length
+            ? `<div class="mb-3">
+                 <div class="text-xs fw-bold text-muted mb-2">Hamkor banklar taqqoslamasi (${fmtUzs(q.principal)} asosida):</div>
+                 <div class="bank-offer-grid">${renderBankOffersHtml(homeData.bank_partners, q.principal, q.months)}</div>
+               </div>`
+            : ""
+        }
+        <div class="table-wrap" style="max-height:260px;overflow-y:auto;">
           <table class="data-table tabular">
             <thead><tr><th>#</th><th>To‘lov sanasi</th><th>Summa</th></tr></thead>
             <tbody>
@@ -731,6 +1048,26 @@ export async function renderCalculatorView(container) {
       `;
     }
   };
+
+  scPriceRange.addEventListener("input", () => {
+    scPrice.value = scPriceRange.value;
+    const pct = Number(scDownRange.value);
+    scDown.value = String(Math.round((Number(scPrice.value) * pct) / 100));
+  });
+  scDownRange.addEventListener("input", () => {
+    const pct = Number(scDownRange.value);
+    scPctLbl.textContent = `${pct}%`;
+    scDown.value = String(Math.round((Number(scPrice.value) * pct) / 100));
+  });
+  scPrice.addEventListener("input", () => {
+    scPriceRange.value = String(Math.min(50000000, Math.max(500000, Number(scPrice.value || 0))));
+  });
+  scDown.addEventListener("input", () => {
+    const p = Math.max(1, Number(scPrice.value || 1));
+    const pct = Math.min(60, Math.round((Number(scDown.value || 0) / p) * 100));
+    scPctLbl.textContent = `${pct}%`;
+    scDownRange.value = String(pct);
+  });
 
   document.getElementById("standalone-calc-form").addEventListener("submit", (e) => {
     e.preventDefault();

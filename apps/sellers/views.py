@@ -4,9 +4,14 @@ from django.contrib.auth import login
 from django.db import transaction
 from django.utils import timezone
 from django.utils.text import slugify
+from pathlib import Path
+from PIL import Image, ImageOps, UnidentifiedImageError
+from django.conf import settings
 from rest_framework import permissions, status
+from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from config.permissions import IsSellerTenantMember
 
 from config.permissions import HasRolePermission, IsSellerTenantMember
 from config.utils import hash_token
@@ -413,6 +418,7 @@ class SellerProductsView(APIView):
                         "stock_quantity": p.stock.quantity if hasattr(p, "stock") else 0,
                         "stock_available": p.stock.available if hasattr(p, "stock") else 0,
                         "primary_image": p.images.first().image_url if p.images.exists() else "",
+                        "sales_count": p.sales_count,
                         "updated_at": p.updated_at,
                     }
                     for p in qs
@@ -507,6 +513,23 @@ class SellerProductDetailView(APIView):
         product.cash_price = new_price
         if "old_price" in request.data:
             product.old_price = int(request.data["old_price"]) if request.data["old_price"] else None
+        if "image_url" in request.data and request.data["image_url"]:
+            img_url = str(request.data["image_url"]).strip()[:500]
+            if img_url.startswith("/") or img_url.startswith("https://") or img_url.startswith("http://"):
+                from apps.catalog.models import ProductImage
+
+                primary_img = product.images.filter(is_primary=True).first() or product.images.first()
+                if primary_img:
+                    primary_img.image_url = img_url
+                    primary_img.save(update_fields=["image_url"])
+                else:
+                    ProductImage.objects.create(
+                        product=product,
+                        image_url=img_url,
+                        alt_text=product.title[:180],
+                        is_primary=True,
+                        sort_order=0,
+                    )
         if request.data.get("submit"):
             product.status = ProductStatus.PENDING_REVIEW
         product.save()
@@ -516,6 +539,84 @@ class SellerProductDetailView(APIView):
             product.stock.save(update_fields=["quantity", "updated_at"])
 
         return Response({"ok": True, "status": product.status})
+
+
+class SellerProductImageUploadView(APIView):
+    """Upload & sanitize a seller product photo (JPEG/PNG/WEBP -> clean Web-optimized JPEG)."""
+
+    permission_classes = [IsSellerTenantMember]
+    parser_classes = [MultiPartParser, FormParser]
+    MAX_BYTES = 5 * 1024 * 1024
+
+    def post(self, request):
+        upload = request.FILES.get("image") or request.FILES.get("file")
+        if not upload:
+            return Response({"detail": "Rasm fayli yuborilmadi (image)."}, status=400)
+        if upload.size > self.MAX_BYTES:
+            return Response({"detail": "Rasm hajmi 5 MB dan oshmasligi kerak."}, status=400)
+
+        try:
+            img = Image.open(upload)
+            img.verify()
+            upload.seek(0)
+            img = Image.open(upload)
+            img = ImageOps.exif_transpose(img)
+        except (UnidentifiedImageError, Exception):
+            return Response(
+                {"detail": "Noto‘g‘ri yoki shikastlangan rasm fayli. JPEG, PNG yoki WEBP yuklang."},
+                status=400,
+            )
+
+        if img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info):
+            bg = Image.new("RGB", img.size, (255, 255, 255))
+            rgba = img.convert("RGBA")
+            bg.paste(rgba, mask=rgba.split()[-1])
+            clean_img = bg
+        else:
+            clean_img = img.convert("RGB")
+
+        clean_img.thumbnail((1200, 1200), Image.Resampling.LANCZOS)
+
+        dest_dir = Path(settings.MEDIA_ROOT) / "products"
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        filename = f"{uuid.uuid4().hex[:16]}.jpg"
+        dest_path = dest_dir / filename
+        clean_img.save(dest_path, format="JPEG", quality=86, optimize=True)
+
+        image_url = f"{settings.MEDIA_URL.rstrip('/')}/products/{filename}"
+
+        product_id = request.data.get("product_id")
+        if product_id:
+            from apps.catalog.models import Product, ProductImage
+
+            store_ids = set(request.user.get_accessible_store_ids())
+            product = Product.objects.filter(pk=product_id).first()
+            if not product or (
+                request.user.role not in {"SUPER_ADMIN", "MARKETPLACE_ADMIN"} and product.store_id not in store_ids
+            ):
+                return Response({"detail": "Mahsulot topilmadi yoki ruxsat yo‘q."}, status=403)
+            primary = product.images.filter(is_primary=True).first() or product.images.first()
+            if primary:
+                primary.image_url = image_url
+                primary.save(update_fields=["image_url"])
+            else:
+                ProductImage.objects.create(
+                    product=product,
+                    image_url=image_url,
+                    alt_text=product.title[:180],
+                    is_primary=True,
+                    sort_order=0,
+                )
+
+        return Response(
+            {
+                "ok": True,
+                "image_url": image_url,
+                "width": clean_img.width,
+                "height": clean_img.height,
+            },
+            status=201,
+        )
 
 
 class AdminModerationQueueView(APIView):

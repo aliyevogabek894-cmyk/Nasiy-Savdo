@@ -622,8 +622,11 @@ export async function renderCustomerCabinetView(container, initialTab = "nasiya"
         ${
           cab.contracts.length
             ? cab.contracts
-                .map(
-                  (c) => `
+                .map((c) => {
+                  const totalPay = Math.max(1, Number(c.total_payable || 0));
+                  const paidAmt = Math.max(0, totalPay - Number(c.remaining_balance || 0));
+                  const paidPct = c.remaining_balance <= 0 ? 100 : Math.min(99, Math.round((paidAmt / totalPay) * 100));
+                  return `
                 <div class="card mb-4" style="background:var(--bg-subtle);">
                   <div class="flex-between mb-2">
                     <div>
@@ -631,6 +634,15 @@ export async function renderCustomerCabinetView(container, initialTab = "nasiya"
                       <span class="text-xs text-muted"> • Buyurtma ${esc(c.order_number)} • ${esc(c.provider_name)}</span>
                     </div>
                     ${statusBadge(c.status)}
+                  </div>
+                  <div class="mb-3">
+                    <div class="flex-between text-xs mb-1">
+                      <span class="text-muted">To‘lov jarayoni: <strong style="color:var(--text-primary);">${paidPct}% to‘landi</strong></span>
+                      <span class="tabular text-muted">${fmtUzs(paidAmt)} / ${fmtUzs(c.total_payable)}</span>
+                    </div>
+                    <div class="loan-progress-track" role="progressbar" aria-valuenow="${paidPct}" aria-valuemin="0" aria-valuemax="100">
+                      <div class="loan-progress-fill" style="width:${paidPct}%;"></div>
+                    </div>
                   </div>
                   <div class="grid-4 tabular text-sm mb-3">
                     <div><span class="text-muted">Asosiy:</span><br><strong>${fmtUzs(c.principal_amount)}</strong></div>
@@ -672,8 +684,8 @@ export async function renderCustomerCabinetView(container, initialTab = "nasiya"
                       </tbody>
                     </table>
                   </div>
-                </div>`
-                )
+                </div>`;
+                })
                 .join("")
             : `<p class="text-muted">Sizda hali nasiya shartnomalari yo‘q.</p>`
         }

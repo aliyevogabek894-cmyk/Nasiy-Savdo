@@ -141,16 +141,17 @@ export async function renderSellerPortalView(container, refreshAuthCallback) {
 
   let activeTab = "overview";
   const sellerTabs = [
-    ["overview", "📊 Umumiy ko‘rinish"],
+    ["overview", "📊 Boshqaruv paneli"],
+    ["profile", "🏪 Do‘konim & Xodimlar"],
     ["products", "📦 Mahsulotlar"],
     ["add-product", "➕ Mahsulot qo‘shish"],
-    ["import", "📥 Import markazi (XLSX/CSV)"],
-    ["integrations", "🔌 Tashqi integratsiya (API)"],
-    ["inventory", "🏭 Ombor va Narxlar"],
-    ["orders", "🚚 Buyurtmalar va Yetkazish"],
+    ["import", "📥 Excel import"],
+    ["inventory", "🏭 Ombor & Qoldiq"],
+    ["orders", "🚚 Buyurtmalar"],
     ["returns", "↩ Qaytarishlar"],
-    ["profile", "🏪 Do‘kon profili va Xodimlar"],
-    ["help", "📘 Yordam va Qoidalar"],
+    ["reports", "📈 Hisobotlar"],
+    ["integrations", "🔌 Tashqi API"],
+    ["help", "📘 Qoidalar & Sozlamalar"],
   ];
 
   const loadTab = async () => {
@@ -216,6 +217,32 @@ export async function renderSellerPortalView(container, refreshAuthCallback) {
             }
           </div>
         </div>
+        <div class="chart-box mt-4">
+          <div class="flex-between mb-2"><strong>📊 Sotuv va Moliyaviy Taqqoslash (${esc(cab.store.public_name)})</strong><span class="text-xs text-muted">Savdo vs Sof Payout vs Holdback</span></div>
+          ${(() => {
+            const sVal = Number(cab.kpis.total_sales_uzs || 0);
+            const pVal = Number(cab.kpis.net_payout_uzs || 0);
+            const hVal = Number(cab.kpis.total_holdback_uzs || 0);
+            const maxM = Math.max(1, sVal, pVal, hVal);
+            const bars = [
+              { label: "Jami savdo", val: sVal, color: "#0D213F" },
+              { label: "Sof Payout", val: pVal, color: "#0D6839" },
+              { label: "Holdback", val: hVal, color: "#C9A227" },
+            ];
+            return `<svg viewBox="0 0 480 96" class="chart-svg" role="img" aria-label="Do'kon moliya grafigi">
+              ${bars
+                .map((b, i) => {
+                  const y = 10 + i * 28;
+                  const bw = Math.max(12, Math.round((b.val / maxM) * 230));
+                  return `
+                    <text x="4" y="${y + 13}" font-size="11" fill="currentColor" font-weight="600">${b.label}</text>
+                    <rect x="110" y="${y}" width="${bw}" height="17" rx="4" fill="${b.color}"></rect>
+                    <text x="${118 + bw}" y="${y + 13}" font-size="11" fill="currentColor" font-weight="700">${fmtUzs(b.val)}</text>`;
+                })
+                .join("")}
+            </svg>`;
+          })()}
+        </div>
       `;
     } else if (activeTab === "products") {
       const pData = await apiFetch("/api/v1/sellers/my-products/");
@@ -238,7 +265,7 @@ export async function renderSellerPortalView(container, refreshAuthCallback) {
                   <td class="fw-bold">${fmtUzs(p.cash_price)}</td>
                   <td>${p.stock_available} dona</td>
                   <td>${statusBadge(p.status)}</td>
-                  <td><button class="btn btn-outline btn-sm" data-edit-prod="${esc(p.id)}" data-price="${p.cash_price}" data-title="${esc(p.title)}">Tahrirlash</button></td>
+                  <td><button class="btn btn-outline btn-sm" data-edit-prod="${esc(p.id)}" data-price="${p.cash_price}" data-title="${esc(p.title)}" data-img="${esc(p.primary_image || "")}">Tahrirlash</button></td>
                 </tr>`
                 )
                 .join("")}
@@ -263,9 +290,32 @@ export async function renderSellerPortalView(container, refreshAuthCallback) {
                 <label class="form-label" for="ep-price">Yangi naqd narx (so‘m)</label>
                 <input id="ep-price" type="number" class="form-control tabular" value="${btn.dataset.price}">
               </div>
+              <div class="form-group">
+                <label class="form-label" for="ep-img-file">Yangi rasm yuklash (ixtiyoriy)</label>
+                <div class="flex-gap mb-2" style="align-items:center;">
+                  <input id="ep-img-file" type="file" accept="image/*" class="form-control" style="max-width:250px;">
+                  <img id="ep-img-preview" src="${esc(btn.dataset.img || "/static/img/products/iphone-16-pro.jpg")}" alt="" style="width:44px;height:44px;object-fit:cover;border-radius:8px;border:1px solid var(--border-color);">
+                </div>
+                <input id="ep-img" class="form-control text-xs" value="${esc(btn.dataset.img || "")}" placeholder="/media-public/products/...">
+              </div>
               <button id="ep-save" class="btn btn-primary" style="width:100%;">Saqlash</button>
             `,
             () => {
+              document.getElementById("ep-img-file")?.addEventListener("change", async (ev) => {
+                const file = ev.target.files?.[0];
+                if (!file) return;
+                try {
+                  const fd = new FormData();
+                  fd.append("image", file);
+                  const up = await apiFetch("/api/v1/sellers/my-products/upload-image/", { method: "POST", body: fd });
+                  document.getElementById("ep-img").value = up.image_url;
+                  const prev = document.getElementById("ep-img-preview");
+                  if (prev) prev.src = up.image_url;
+                  showToast("Rasm yuklandi!", "success");
+                } catch (err) {
+                  showToast(err.message, "error");
+                }
+              });
               document.getElementById("ep-save").onclick = async () => {
                 try {
                   const res = await apiFetch(`/api/v1/sellers/my-products/${btn.dataset.editProd}/`, {
@@ -273,6 +323,7 @@ export async function renderSellerPortalView(container, refreshAuthCallback) {
                     body: JSON.stringify({
                       title: document.getElementById("ep-title").value,
                       cash_price: Number(document.getElementById("ep-price").value),
+                      image_url: document.getElementById("ep-img").value,
                     }),
                   });
                   closeModal();
@@ -320,8 +371,14 @@ export async function renderSellerPortalView(container, refreshAuthCallback) {
             </div>
           </div>
           <div class="form-group">
-            <label class="form-label" for="ap-img">Rasm URL (ixtiyoriy)</label>
-            <input id="ap-img" class="form-control" value="/static/icons/smartphone.svg">
+            <label class="form-label" for="ap-img-file">Mahsulot rasmini yuklash (JPEG / PNG / WEBP)</label>
+            <div class="flex-gap mb-2" style="align-items:center;">
+              <input id="ap-img-file" type="file" accept="image/*" class="form-control" style="max-width:290px;">
+              <img id="ap-img-preview" src="/static/img/products/iphone-16-pro.jpg" alt="Oldindan ko‘rish" style="width:52px;height:52px;object-fit:cover;border-radius:10px;border:1px solid var(--border-color);">
+              <span id="ap-img-status" class="text-xs text-muted">Tayyor</span>
+            </div>
+            <label class="form-label text-xs" for="ap-img">Yoki tayyor rasm URL</label>
+            <input id="ap-img" class="form-control" value="/static/img/products/iphone-16-pro.jpg">
           </div>
           <div class="form-group">
             <label class="form-label" for="ap-desc">Texnik tavsif</label>
@@ -356,6 +413,25 @@ export async function renderSellerPortalView(container, refreshAuthCallback) {
           showToast(err.message, "error");
         }
       };
+      document.getElementById("ap-img-file")?.addEventListener("change", async (ev) => {
+        const file = ev.target.files?.[0];
+        if (!file) return;
+        const st = document.getElementById("ap-img-status");
+        if (st) st.textContent = "Yuklanmoqda...";
+        try {
+          const fd = new FormData();
+          fd.append("image", file);
+          const up = await apiFetch("/api/v1/sellers/my-products/upload-image/", { method: "POST", body: fd });
+          document.getElementById("ap-img").value = up.image_url;
+          const prev = document.getElementById("ap-img-preview");
+          if (prev) prev.src = up.image_url;
+          if (st) st.textContent = `✓ Yuklandi (${up.width}×${up.height})`;
+          showToast("Mahsulot rasmi xavfsiz saqlandi!", "success");
+        } catch (err) {
+          if (st) st.textContent = `⚠ ${err.message}`;
+          showToast(err.message, "error");
+        }
+      });
       document.getElementById("add-prod-form").onsubmit = (e) => {
         e.preventDefault();
         submitProd(true);
@@ -721,6 +797,37 @@ export async function renderSellerPortalView(container, refreshAuthCallback) {
           showToast(err.message, "error");
         }
       });
+    } else if (activeTab === "reports") {
+      const pData = await apiFetch("/api/v1/sellers/my-products/");
+      const prods = pData.results || [];
+      const topProds = [...prods].sort((a, b) => Number(b.sales_count || 0) - Number(a.sales_count || 0)).slice(0, 5);
+      const maxSales = Math.max(1, ...topProds.map((x) => Number(x.sales_count || 0)));
+      const activeCnt = prods.filter((p) => p.status === "Active").length;
+      const pendCnt = prods.filter((p) => p.status === "Pending Review").length;
+      panel.innerHTML = `
+        <h2 class="mb-3">Sotuv va Katalog Hisobotlari</h2>
+        <div class="grid-3 mb-4">
+          <div class="kpi-card"><div class="kpi-label">Faol mahsulotlar</div><div class="kpi-value tabular">${activeCnt}</div></div>
+          <div class="kpi-card"><div class="kpi-label">Moderatsiyada</div><div class="kpi-value tabular">${pendCnt}</div></div>
+          <div class="kpi-card"><div class="kpi-label">Komissiya stavkasi</div><div class="kpi-value tabular">${esc(cab.store.commission_pct)}%</div></div>
+        </div>
+        <div class="chart-box">
+          <div class="flex-between mb-2"><strong>📊 Eng ko‘p sotilgan 5 mahsulot (dona)</strong><span class="text-xs text-muted">${esc(cab.store.public_name)}</span></div>
+          <svg viewBox="0 0 520 155" class="chart-svg" role="img" aria-label="Sotuv grafigi">
+            ${topProds
+              .map((p, idx) => {
+                const y = 12 + idx * 28;
+                const sVal = Number(p.sales_count || 0);
+                const bw = Math.max(14, Math.round((sVal / maxSales) * 230));
+                return `
+                  <text x="4" y="${y + 14}" font-size="11" fill="currentColor" font-weight="600">${esc(String(p.title).slice(0, 24))}</text>
+                  <rect x="200" y="${y}" width="${bw}" height="18" rx="4" fill="${idx === 0 ? "#C9A227" : "#0D213F"}"></rect>
+                  <text x="${208 + bw}" y="${y + 14}" font-size="11" fill="currentColor" font-weight="700">${sVal} ta</text>`;
+              })
+              .join("")}
+          </svg>
+        </div>
+      `;
     } else {
       panel.innerHTML = `
         <h2>Sotuvchi qoidalari va Onboarding yo‘riqnomasi</h2>
