@@ -949,3 +949,404 @@ class UzumPspAndMarketplaceFlowTests(_DjangoTestCase):
         self.assertTrue(sup_post.data["credit_policy"]["cash_only_required"])
         self.assertEqual(sup_post.data["credit_policy"]["credit_condition_code"], "OVERDUE_BLOCKED")
         self.assertGreaterEqual(sup_post.data["supervisors_notified"], 1)
+
+    def test_paynet_uws_protocol_receipt_and_admin_finance_report(self):
+        import base64
+        from datetime import timedelta
+        from django.conf import settings
+        from django.test import override_settings
+        from apps.accounts.models import UserRole as _Role
+        from apps.commerce.models import Order
+        from apps.finance.models import (
+            ContractStatus,
+            CustomerConsent,
+            CustomerLimit,
+            InstallmentContract,
+            InstallmentPlan,
+            PaymentRecord,
+            PspTransaction,
+        )
+        from apps.finance.psp import compute_click_signature
+
+        today = timezone.localdate()
+        super_admin = _TestUser.objects.filter(role=_Role.SUPER_ADMIN, is_active=True).first()
+        self.assertIsNotNone(super_admin)
+
+        pn_cust = _TestUser.objects.create_user(
+            "+998901888777",
+            "Pass1234!",
+            full_name="Paynet Mijoz",
+            role=_Role.CUSTOMER,
+        )
+        other_cust = _TestUser.objects.create_user(
+            "+998901000099",
+            "Pass1234!",
+            full_name="Other Cust",
+            role=_Role.CUSTOMER,
+        )
+        plan = InstallmentPlan.objects.filter(is_active=True).order_by("months").first()
+        self.assertIsNotNone(plan)
+
+        # Complete consent + clean KYC/KATM check so checkout opens ZARVON_NASIYA contract
+        self.client.force_authenticate(user=pn_cust)
+        self.client.post(
+            "/api/v1/finance/consents/",
+            {"purposes": {"IDENTITY": True, "CREDIT_BUREAU": True, "BANK_TRANSFER": True}},
+            format="json",
+        )
+        self.client.post(
+            "/api/v1/finance/kyc/verify/",
+            {
+                "pinfl": "31908950010888",
+                "inn": "308887766",
+                "passport": "AB7654321",
+                "birth_year": 1994,
+                "monthly_income_uzs": 15_000_000,
+                "scenario": "clean",
+                "liveness_passed": True,
+            },
+            format="json",
+        )
+        CustomerLimit.objects.update_or_create(
+            user=pn_cust,
+            defaults={"total_limit_uzs": 50_000_000, "used_limit_uzs": 0},
+        )
+        chk_res = self.client.post(
+            "/api/v1/commerce/checkout/",
+            {
+                "idempotency_key": f"chk-pn-{pn_cust.id}",
+                "items": [{"product_id": str(self.product.id), "quantity": 1}],
+                "delivery_type": "COURIER",
+                "delivery_address": "Toshkent, Yunusobod",
+                "payment_channel": "ZARVON_NASIYA",
+                "plan_id": str(plan.id),
+                "months": plan.months,
+                "down_payment": 0,
+            },
+            format="json",
+        )
+        self.assertEqual(chk_res.status_code, 201, chk_res.data)
+        c_num = chk_res.data["finance"]["contract_number"]
+        contract = InstallmentContract.objects.get(contract_number=c_num)
+        first_item = contract.schedule_items.order_by("installment_no").first()
+        first_due_uzs = first_item.amount_due
+        first_item.due_date = today - timedelta(days=5)
+        first_item.status = "OVERDUE"
+        first_item.save(update_fields=["due_date", "status"])
+        contract.status = ContractStatus.OVERDUE
+        contract.save(update_fields=["status"])
+        initial_balance = contract.remaining_balance
+
+        paynet_creds = base64.b64encode(f"{settings.PAYNET_USERNAME}:{settings.PAYNET_PASSWORD}".encode("utf-8")).decode("utf-8")
+        paynet_auth = f"Basic {paynet_creds}"
+
+        # 1. Paynet UWS Basic Auth & IP allowlist checks
+        bad_auth_res = self.client.post(
+            "/payments/paynet/uws/",
+            {"jsonrpc": "2.0", "id": 1, "method": "GetInformation", "params": {"serviceId": settings.PAYNET_SERVICE_ID, "fields": {"order_id": contract.contract_number}}},
+            format="json",
+            HTTP_AUTHORIZATION="Basic d3Jvbmc6d3Jvbmc=",
+        )
+        self.assertEqual(bad_auth_res.status_code, 401)
+        self.assertIn("error", bad_auth_res.data)
+
+        with override_settings(PAYNET_ALLOWED_IPS="185.74.5.10/32"):
+            blocked_ip = self.client.post(
+                "/payments/paynet/uws/",
+                {"jsonrpc": "2.0", "id": 2, "method": "GetInformation", "params": {"serviceId": settings.PAYNET_SERVICE_ID, "fields": {"order_id": contract.contract_number}}},
+                format="json",
+                HTTP_AUTHORIZATION=paynet_auth,
+                REMOTE_ADDR="127.0.0.1",
+            )
+            self.assertEqual(blocked_ip.status_code, 403)
+            allowed_ip = self.client.post(
+                "/payments/paynet/uws/",
+                {"jsonrpc": "2.0", "id": 3, "method": "GetInformation", "params": {"serviceId": settings.PAYNET_SERVICE_ID, "fields": {"order_id": contract.contract_number}}},
+                format="json",
+                HTTP_AUTHORIZATION=paynet_auth,
+                HTTP_X_FORWARDED_FOR="185.74.5.10",
+            )
+            self.assertEqual(allowed_ip.status_code, 200, allowed_ip.data)
+            self.assertEqual(allowed_ip.data["result"]["status"], 0)
+
+        # 2. Paynet PerformTransaction settles first overdue installment & transitions OVERDUE -> ACTIVE
+        tx_time = timezone.now().strftime("%Y-%m-%d %H:%M:%S")
+        p_perf = self.client.post(
+            "/api/v1/finance/psp/paynet/",
+            {
+                "jsonrpc": "2.0",
+                "id": 4,
+                "method": "PerformTransaction",
+                "params": {
+                    "serviceId": settings.PAYNET_SERVICE_ID,
+                    "transactionId": 9001001,
+                    "transactionTime": tx_time,
+                    "amount": first_due_uzs * 100,
+                    "fields": {"order_id": contract.contract_number},
+                },
+            },
+            format="json",
+            HTTP_AUTHORIZATION=paynet_auth,
+        )
+        self.assertEqual(p_perf.status_code, 200, p_perf.data)
+        self.assertIn("result", p_perf.data)
+        paynet_payment_id = p_perf.data["result"]["payment_id"]
+
+        contract.refresh_from_db()
+        expected_after_first = initial_balance - first_due_uzs
+        self.assertEqual(contract.remaining_balance, expected_after_first)
+        if expected_after_first > 0:
+            self.assertEqual(contract.status, ContractStatus.ACTIVE)
+
+        # Idempotent replay must NOT double-deduct debt
+        p_replay = self.client.post(
+            "/payments/paynet/uws/",
+            {
+                "jsonrpc": "2.0",
+                "id": 5,
+                "method": "PerformTransaction",
+                "params": {
+                    "serviceId": settings.PAYNET_SERVICE_ID,
+                    "transactionId": 9001001,
+                    "transactionTime": tx_time,
+                    "amount": first_due_uzs * 100,
+                    "fields": {"order_id": contract.contract_number},
+                },
+            },
+            format="json",
+            HTTP_AUTHORIZATION=paynet_auth,
+        )
+        self.assertEqual(p_replay.status_code, 200)
+        contract.refresh_from_db()
+        self.assertEqual(contract.remaining_balance, expected_after_first)
+
+        p_chk = self.client.post(
+            "/payments/paynet/uws/",
+            {"jsonrpc": "2.0", "id": 6, "method": "CheckTransaction", "params": {"serviceId": settings.PAYNET_SERVICE_ID, "transactionId": 9001001}},
+            format="json",
+            HTTP_AUTHORIZATION=paynet_auth,
+        )
+        self.assertEqual(p_chk.status_code, 200)
+        self.assertEqual(p_chk.data["result"]["transactionState"], 1)
+
+        p_stmt = self.client.post(
+            "/payments/paynet/uws/",
+            {
+                "jsonrpc": "2.0",
+                "id": 7,
+                "method": "GetStatement",
+                "params": {
+                    "serviceId": settings.PAYNET_SERVICE_ID,
+                    "dateFrom": (timezone.now() - timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S"),
+                    "dateTo": (timezone.now() + timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S"),
+                },
+            },
+            format="json",
+            HTTP_AUTHORIZATION=paynet_auth,
+        )
+        self.assertEqual(p_stmt.status_code, 200)
+        self.assertGreaterEqual(len(p_stmt.data["result"]["statements"]), 1)
+
+        prods = list(_TestProduct.objects.filter(installment_eligible=True, status=_TestProductStatus.APPROVED)[:5])
+        self.assertGreaterEqual(len(prods), 1)
+
+        def _make_direct_order(key, idx):
+            prod = prods[idx % len(prods)]
+            self.client.force_authenticate(user=pn_cust)
+            res = self.client.post(
+                "/api/v1/commerce/checkout/",
+                {
+                    "idempotency_key": key,
+                    "items": [{"product_id": str(prod.id), "quantity": 1}],
+                    "delivery_type": "COURIER",
+                    "delivery_address": "Toshkent, Yunusobod",
+                    "payment_channel": "DIRECT_PAY",
+                    "psp_provider": "Paynet",
+                },
+                format="json",
+            )
+            self.assertEqual(res.status_code, 201, res.data)
+            return res.data["order_number"], int(res.data["total_amount"])
+
+        # Paynet CancelTransaction on separate order
+        ord_pn_num, ord_pn_amt = _make_direct_order("ord-pn-can1", 1)
+        self.client.post(
+            "/payments/paynet/uws/",
+            {"jsonrpc": "2.0", "id": 8, "method": "PerformTransaction", "params": {"serviceId": settings.PAYNET_SERVICE_ID, "transactionId": 9001002, "transactionTime": tx_time, "amount": ord_pn_amt * 100, "fields": {"order_id": ord_pn_num}}},
+            format="json",
+            HTTP_AUTHORIZATION=paynet_auth,
+        )
+        p_can = self.client.post(
+            "/payments/paynet/uws/",
+            {"jsonrpc": "2.0", "id": 9, "method": "CancelTransaction", "params": {"serviceId": settings.PAYNET_SERVICE_ID, "transactionId": 9001002}},
+            format="json",
+            HTTP_AUTHORIZATION=paynet_auth,
+        )
+        self.assertEqual(p_can.status_code, 200)
+        self.assertEqual(p_can.data["result"]["transactionState"], 2)
+
+        # 3. Payme balance guard & cancel_time tracking
+        payme_auth = "Basic " + base64.b64encode(f"Paycom:{settings.PAYME_CASHBOX_KEY}".encode("utf-8")).decode("utf-8")
+        over_chk = self.client.post(
+            "/payments/payme/",
+            {"jsonrpc": "2.0", "id": 10, "method": "CheckPerformTransaction", "params": {"amount": (expected_after_first + 500_000) * 100, "account": {"order_id": contract.contract_number}}},
+            format="json",
+            HTTP_AUTHORIZATION=payme_auth,
+        )
+        self.assertEqual(over_chk.data["error"]["code"], -31001)
+
+        ord_pm_num, ord_pm_amt = _make_direct_order("ord-pm-can1", 2)
+        pm_id = "pm_cancel_test_001"
+        self.client.post(
+            "/payments/payme/",
+            {"jsonrpc": "2.0", "id": 11, "method": "CreateTransaction", "params": {"id": pm_id, "time": 1700000000000, "amount": ord_pm_amt * 100, "account": {"order_id": ord_pm_num}}},
+            format="json",
+            HTTP_AUTHORIZATION=payme_auth,
+        )
+        pm_can = self.client.post(
+            "/payments/payme/",
+            {"jsonrpc": "2.0", "id": 12, "method": "CancelTransaction", "params": {"id": pm_id, "reason": 3}},
+            format="json",
+            HTTP_AUTHORIZATION=payme_auth,
+        )
+        self.assertEqual(pm_can.data["result"]["state"], -1)
+        self.assertGreater(pm_can.data["result"]["cancel_time"], 0)
+        pm_chk = self.client.post(
+            "/payments/payme/",
+            {"jsonrpc": "2.0", "id": 13, "method": "CheckTransaction", "params": {"id": pm_id}},
+            format="json",
+            HTTP_AUTHORIZATION=payme_auth,
+        )
+        self.assertEqual(pm_chk.data["result"]["state"], -1)
+        self.assertEqual(pm_chk.data["result"]["reason"], 3)
+        self.assertEqual(pm_chk.data["result"]["cancel_time"], pm_can.data["result"]["cancel_time"])
+
+        # 4. Click /payments/click/prepare/ & /payments/click/complete/ + negative error cancel + contract closure
+        sign_time = timezone.now().strftime("%Y-%m-%d %H:%M:%S")
+        ord_clk_num, ord_clk_amt = _make_direct_order("ord-clk-can1", 3)
+        prep_sig_can = compute_click_signature(
+            click_trans_id="770011",
+            service_id=settings.CLICK_SERVICE_ID,
+            secret_key=settings.CLICK_SECRET_KEY,
+            merchant_trans_id=ord_clk_num,
+            amount=str(ord_clk_amt),
+            action="0",
+            sign_time=sign_time,
+        )
+        clk_p1 = self.client.post(
+            "/payments/click/prepare/",
+            {"click_trans_id": "770011", "service_id": settings.CLICK_SERVICE_ID, "click_paydoc_id": "D1", "merchant_trans_id": ord_clk_num, "amount": str(ord_clk_amt), "sign_time": sign_time, "sign_string": prep_sig_can},
+            format="json",
+        )
+        self.assertEqual(clk_p1.data["error"], 0)
+        comp_sig_can = compute_click_signature(
+            click_trans_id="770011",
+            service_id=settings.CLICK_SERVICE_ID,
+            secret_key=settings.CLICK_SECRET_KEY,
+            merchant_trans_id=ord_clk_num,
+            merchant_prepare_id=str(clk_p1.data["merchant_prepare_id"]),
+            amount=str(ord_clk_amt),
+            action="1",
+            sign_time=sign_time,
+        )
+        clk_c_err = self.client.post(
+            "/payments/click/complete/",
+            {"click_trans_id": "770011", "service_id": settings.CLICK_SERVICE_ID, "click_paydoc_id": "D1", "merchant_trans_id": ord_clk_num, "merchant_prepare_id": clk_p1.data["merchant_prepare_id"], "amount": str(ord_clk_amt), "error": "-5017", "sign_time": sign_time, "sign_string": comp_sig_can},
+            format="json",
+        )
+        self.assertEqual(clk_c_err.data["error"], -9)
+        self.assertEqual(_TestPspTransaction.objects.get(external_trans_id="770011").action_stage, "CANCELLED")
+
+        # Complete remaining balance on contract via Click -> closes contract
+        rem_str = str(expected_after_first)
+        prep_sig_ok = compute_click_signature(
+            click_trans_id="770022",
+            service_id=settings.CLICK_SERVICE_ID,
+            secret_key=settings.CLICK_SECRET_KEY,
+            merchant_trans_id=contract.contract_number,
+            amount=rem_str,
+            action="0",
+            sign_time=sign_time,
+        )
+        clk_p2 = self.client.post(
+            "/payments/click/prepare/",
+            {"click_trans_id": "770022", "service_id": settings.CLICK_SERVICE_ID, "click_paydoc_id": "D2", "merchant_trans_id": contract.contract_number, "amount": rem_str, "sign_time": sign_time, "sign_string": prep_sig_ok},
+            format="json",
+        )
+        self.assertEqual(clk_p2.data["error"], 0)
+        comp_sig_ok = compute_click_signature(
+            click_trans_id="770022",
+            service_id=settings.CLICK_SERVICE_ID,
+            secret_key=settings.CLICK_SECRET_KEY,
+            merchant_trans_id=contract.contract_number,
+            merchant_prepare_id=str(clk_p2.data["merchant_prepare_id"]),
+            amount=rem_str,
+            action="1",
+            sign_time=sign_time,
+        )
+        clk_c2 = self.client.post(
+            "/payments/click/complete/",
+            {"click_trans_id": "770022", "service_id": settings.CLICK_SERVICE_ID, "click_paydoc_id": "D2", "merchant_trans_id": contract.contract_number, "merchant_prepare_id": clk_p2.data["merchant_prepare_id"], "amount": rem_str, "error": "0", "sign_time": sign_time, "sign_string": comp_sig_ok},
+            format="json",
+        )
+        self.assertEqual(clk_c2.data["error"], 0)
+        contract.refresh_from_db()
+        self.assertEqual(contract.remaining_balance, 0)
+        self.assertEqual(contract.status, ContractStatus.CLOSED)
+
+        # Already-closed contract rejects subsequent Click prepare
+        prep_sig_dup = compute_click_signature(
+            click_trans_id="770033",
+            service_id=settings.CLICK_SERVICE_ID,
+            secret_key=settings.CLICK_SECRET_KEY,
+            merchant_trans_id=contract.contract_number,
+            amount="100000",
+            action="0",
+            sign_time=sign_time,
+        )
+        clk_dup = self.client.post(
+            "/payments/click/prepare/",
+            {"click_trans_id": "770033", "service_id": settings.CLICK_SERVICE_ID, "click_paydoc_id": "D3", "merchant_trans_id": contract.contract_number, "amount": "100000", "sign_time": sign_time, "sign_string": prep_sig_dup},
+            format="json",
+        )
+        self.assertEqual(clk_dup.data["error"], -4)
+
+        # 5. Customer sandbox checkout via Paynet + Electronic Receipt JSON/HTML & RBAC
+        ord_sim_num, ord_sim_amt = _make_direct_order("ord-sim-pn1", 4)
+        self.client.force_authenticate(user=pn_cust)
+        sim_res = self.client.post(
+            "/api/v1/finance/psp/checkout/",
+            {"reference": ord_sim_num, "psp_provider": "Paynet", "amount_uzs": ord_sim_amt},
+            format="json",
+        )
+        self.assertEqual(sim_res.status_code, 200, sim_res.data)
+        self.assertIsNotNone(sim_res.data["payment_id"])
+
+        rec_json = self.client.get(f"/api/v1/finance/payments/{paynet_payment_id}/receipt/")
+        self.assertEqual(rec_json.status_code, 200, rec_json.data)
+        self.assertEqual(rec_json.data["provider"], "Paynet")
+        self.assertEqual(rec_json.data["amount_uzs"], first_due_uzs)
+        self.assertEqual(rec_json.data["target_number"], contract.contract_number)
+
+        rec_html = self.client.get(f"/api/v1/finance/payments/{paynet_payment_id}/receipt/?format=html")
+        self.assertEqual(rec_html.status_code, 200)
+        self.assertIn("ZARVON PAY", rec_html.content.decode("utf-8"))
+        self.assertIn("window.print()", rec_html.content.decode("utf-8"))
+        rec_html_v = self.client.get(f"/api/v1/finance/payments/{paynet_payment_id}/receipt/?view=html")
+        self.assertEqual(rec_html_v.status_code, 200)
+        self.assertIn("ZARVON PAY", rec_html_v.content.decode("utf-8"))
+
+        self.client.force_authenticate(user=other_cust)
+        rec_forb = self.client.get(f"/api/v1/finance/payments/{paynet_payment_id}/receipt/")
+        self.assertEqual(rec_forb.status_code, 403)
+
+        # 6. Admin Financial Report & Recent Payments
+        self.client.force_authenticate(user=super_admin)
+        adm_rep = self.client.get("/api/v1/finance/reconciliation/")
+        self.assertEqual(adm_rep.status_code, 200)
+        self.assertGreaterEqual(adm_rep.data["finance_report"]["total_collected_uzs"], initial_balance + ord_sim_amt)
+        providers_map = {row["provider"]: row["total_amount_uzs"] for row in adm_rep.data["finance_report"]["provider_breakdown"]}
+        self.assertGreaterEqual(providers_map.get("Paynet", 0), first_due_uzs + ord_sim_amt)
+        self.assertGreaterEqual(providers_map.get("Click", 0), expected_after_first)
+        self.assertGreaterEqual(len(adm_rep.data["recent_payments"]), 3)
+        self.assertTrue(PaymentRecord.objects.filter(id=paynet_payment_id).exists())

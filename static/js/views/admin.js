@@ -1,6 +1,7 @@
 /* Comprehensive Multi-Role Admin, Compliance, Risk, Banking, Collections & Audit Console */
 import { apiFetch, closeModal, esc, fmtDate, fmtUzs, openModal, showToast, statusBadge } from "../api.js";
 import { AppState } from "../i18n.js";
+import { openElectronicReceiptModal } from "./psp_scoring_ui.js";
 
 const ADMIN_ROLES = new Set([
   "SUPER_ADMIN",
@@ -517,8 +518,73 @@ export async function renderAdminPortalView(container, refreshAuthCallback) {
         };
       } else if (activeTab === "reconciliation") {
         const rec = await apiFetch("/api/v1/finance/reconciliation/");
+        const fr = rec.finance_report || {};
+        const providers = fr.provider_breakdown || [];
+        const recentPayments = rec.recent_payments || [];
         panel.innerHTML = `
-          <h2 class="mb-3">Kunlik Reconciliation va Sotuvchi Hisob-kitoblari (11 / 28.7)</h2>
+          <h2 class="mb-3">Jonli Moliyaviy Hisobot, PSP Tushumlari va Reconciliation (11 / 28.7)</h2>
+          <div class="kpi-row mb-4 tabular">
+            <div class="kpi-card">
+              <div class="text-xs text-muted">Jami yig‘ilgan to‘lovlar</div>
+              <div class="fw-bold" style="font-size:1.3rem;color:#0f766e;">${fmtUzs(fr.total_collected_uzs || 0)}</div>
+              <div class="text-xs text-muted">${fr.succeeded_payments_count || 0} ta tasdiqlangan chek</div>
+            </div>
+            <div class="kpi-card">
+              <div class="text-xs text-muted">Bugungi tushum</div>
+              <div class="fw-bold" style="font-size:1.3rem;">${fmtUzs(fr.today_collected_uzs || 0)}</div>
+              <div class="text-xs text-muted">Kutilmoqda: ${fr.pending_payments_count || 0} • Bekor: ${fr.cancelled_payments_count || 0}</div>
+            </div>
+            <div class="kpi-card">
+              <div class="text-xs text-muted">Faol nasiya portfeli qoldig‘i</div>
+              <div class="fw-bold" style="font-size:1.3rem;">${fmtUzs(fr.active_portfolio_debt_uzs || 0)}</div>
+              <div class="text-xs text-muted">${fr.active_contracts_count || 0} ta ochiq shartnoma</div>
+            </div>
+            <div class="kpi-card">
+              <div class="text-xs text-muted">Kechikkan (OVERDUE) qarzdorlik</div>
+              <div class="fw-bold text-danger" style="font-size:1.3rem;">${fmtUzs(fr.overdue_portfolio_debt_uzs || 0)}</div>
+              <div class="text-xs text-muted">${fr.overdue_contracts_count || 0} ta kechikkan shartnoma</div>
+            </div>
+          </div>
+
+          <h3 class="mb-2">To‘lov tizimlari bo‘yicha tushum (Payme / Click / Paynet / Uzum)</h3>
+          <div class="table-wrap mb-4">
+            <table class="data-table tabular text-sm">
+              <thead><tr><th>Provayder</th><th>Tasdiqlangan cheklar</th><th>Jami tushum</th><th>PSP Settled</th><th>Bekor qilingan</th></tr></thead>
+              <tbody>
+                ${
+                  providers.length
+                    ? providers
+                        .map(
+                          (pv) =>
+                            `<tr><td class="fw-bold">${esc(pv.provider)}</td><td>${pv.tx_count}</td><td class="fw-bold">${fmtUzs(pv.total_amount_uzs)}</td><td>${pv.psp_settled_count}</td><td>${pv.psp_cancelled_count}</td></tr>`
+                        )
+                        .join("")
+                    : `<tr><td colspan="5" class="text-muted">Hozircha tasdiqlangan to‘lovlar yo‘q.</td></tr>`
+                }
+              </tbody>
+            </table>
+          </div>
+
+          <h3 class="mb-2">So‘nggi to‘lovlar va Elektron cheklar (${recentPayments.length})</h3>
+          <div class="table-wrap mb-4">
+            <table class="data-table tabular text-sm">
+              <thead><tr><th>Sana</th><th>Mijoz</th><th>Maqsad</th><th>Provayder</th><th>Summa</th><th>Holat</th><th>Chek</th></tr></thead>
+              <tbody>
+                ${
+                  recentPayments.length
+                    ? recentPayments
+                        .map(
+                          (p) =>
+                            `<tr><td>${fmtDate(p.created_at)}</td><td>${esc(p.customer_name)} <small class="text-muted">${esc(p.customer_phone)}</small></td><td>${esc(p.target_kind)} #${esc(p.target_ref)}</td><td>${esc(p.provider)}</td><td class="fw-bold">${fmtUzs(p.amount)}</td><td>${statusBadge(p.status)}</td><td><button type="button" class="btn btn-outline btn-xs" data-adm-receipt="${esc(p.id)}">🧾 Chek</button></td></tr>`
+                        )
+                        .join("")
+                    : `<tr><td colspan="7" class="text-muted">To‘lov yozuvlari yo‘q.</td></tr>`
+                }
+              </tbody>
+            </table>
+          </div>
+
+          <h3 class="mb-2">Kunlik Reconciliation jurnali</h3>
           <div class="table-wrap mb-4">
             <table class="data-table tabular">
               <thead><tr><th>Sana</th><th>Provayder</th><th>ZARVON yozuvi</th><th>Provayder hisoboti</th><th>Farq</th><th>Holat</th></tr></thead>
@@ -537,6 +603,9 @@ export async function renderAdminPortalView(container, refreshAuthCallback) {
             </table>
           </div>
         `;
+        panel.querySelectorAll("[data-adm-receipt]").forEach((btn) => {
+          btn.addEventListener("click", () => openElectronicReceiptModal(btn.dataset.admReceipt));
+        });
       } else if (activeTab === "collections") {
         const col = await apiFetch("/api/v1/risk/collections/");
         panel.innerHTML = `

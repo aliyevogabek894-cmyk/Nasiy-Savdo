@@ -2,6 +2,7 @@
 import { apiFetch, closeModal, esc, fmtDate, fmtUzs, genIdempotencyKey, openDeliveryPointPickerModal, openModal, showToast, statusBadge } from "../api.js";
 import { AppState } from "../i18n.js";
 import {
+  openElectronicReceiptModal,
   openPspPayModal,
   renderDueAlertsHtml,
   renderKatmMibDstiReportHtml,
@@ -824,7 +825,41 @@ export async function renderCustomerCabinetView(container, initialTab = "nasiya"
             : `<p class="text-muted">Sizda hali nasiya shartnomalari yo‘q.</p>`
         }
         ${renderKatmMibDstiReportHtml(cab.latest_scoring_report, cab.credit_policy)}
+
+        <h3 class="mt-5 mb-2">🧾 To‘lovlar tarixi va Elektron cheklar (${(cab.payments || []).length})</h3>
+        ${
+          (cab.payments || []).length
+            ? `<div class="table-wrap mb-4">
+                <table class="data-table tabular text-sm">
+                  <thead><tr><th>Sana</th><th>Maqsad / Hujjat</th><th>Provayder</th><th>Summa</th><th>Holat</th><th>Elektron chek</th></tr></thead>
+                  <tbody>
+                    ${(cab.payments || [])
+                      .map((p) => {
+                        const targetLabel = p.contract_number
+                          ? `Nasiya #${esc(p.contract_number)}`
+                          : p.order_number
+                          ? `Buyurtma #${esc(p.order_number)}`
+                          : esc(p.reconciliation_ref || p.payment_intent_id);
+                        return `<tr>
+                          <td>${fmtDate(p.created_at)}</td>
+                          <td>${targetLabel}</td>
+                          <td>${esc(p.provider)}</td>
+                          <td class="fw-bold">${fmtUzs(p.amount)}</td>
+                          <td>${statusBadge(p.status)}</td>
+                          <td><button type="button" class="btn btn-outline btn-xs" data-open-receipt="${esc(p.id)}">🧾 Chek</button></td>
+                        </tr>`;
+                      })
+                      .join("")}
+                  </tbody>
+                </table>
+              </div>`
+            : `<p class="text-sm text-muted mb-4">Hozircha tasdiqlangan to‘lov cheklari yo‘q.</p>`
+        }
       `;
+
+      panel.querySelectorAll("[data-open-receipt]").forEach((btn) => {
+        btn.addEventListener("click", () => openElectronicReceiptModal(btn.dataset.openReceipt));
+      });
 
       panel.querySelectorAll("[data-pay-contract]").forEach((btn) => {
         btn.addEventListener("click", () => {

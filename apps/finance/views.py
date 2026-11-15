@@ -5,7 +5,10 @@ import json
 import uuid
 from django.conf import settings
 from django.db import transaction
+from django.db.models import Count, Q, Sum
+from django.http import HttpResponse
 from django.utils import timezone
+from django.utils.html import escape
 from rest_framework import permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -41,8 +44,10 @@ from apps.finance.providers import ComplianceViolationError, OwnInstallmentProvi
 from apps.finance.psp import (
     build_psp_checkout_payload,
     compute_click_signature,
+    get_client_ip,
     process_click_webhook,
     process_payme_rpc,
+    process_paynet_uws,
     process_uzum_webhook,
     resolve_payment_target,
     settle_psp_payment,
@@ -328,7 +333,7 @@ class CustomerFinanceCabinetView(APIView):
         limit_events = lim.events.all()[:15]
         contracts = InstallmentContract.objects.filter(customer=user).select_related("order", "plan").prefetch_related("schedule_items", "early_repayments")
         credit_apps = CreditApplication.objects.filter(customer=user).prefetch_related("bank_submissions__bank", "bank_submissions__offer")
-        payments = PaymentRecord.objects.filter(user=user)[:20]
+        payments = PaymentRecord.objects.filter(user=user).select_related("order", "contract")[:20]
         assessments = RiskAssessment.objects.filter(user=user)[:5]
 
         # Find earliest upcoming installment & 7-day alerts across active contracts
@@ -515,10 +520,15 @@ class CustomerFinanceCabinetView(APIView):
                 "credit_applications": apps_data,
                 "payments": [
                     {
+                        "id": str(p.id),
                         "payment_intent_id": p.payment_intent_id,
                         "provider": p.provider,
                         "amount": p.amount,
                         "status": p.status,
+                        "reconciliation_ref": p.reconciliation_ref,
+                        "order_number": p.order.order_number if p.order else None,
+                        "contract_number": p.contract.contract_number if p.contract else None,
+                        "receipt_url": f"/api/v1/finance/payments/{p.id}/receipt/",
                         "is_demo": p.is_demo,
                         "created_at": p.created_at,
                     }
@@ -602,6 +612,8 @@ class ContractRepayView(APIView):
                 lim.used_limit_uzs -= restore
                 lim.save()
                 LimitEvent.objects.create(customer_limit=lim, event_type="RESTORE", amount_delta=restore, reason=f"Shartnoma #{contract.contract_number} yopildi", actor=request.user)
+        elif contract.status == ContractStatus.OVERDUE and not contract.schedule_items.filter(status="OVERDUE").exists():
+            contract.status = ContractStatus.ACTIVE
 
         contract.save()
         RepaymentEvent.objects.create(
@@ -621,7 +633,7 @@ class ContractRepayView(APIView):
                 balance_after=contract.remaining_balance,
             )
 
-        PaymentRecord.objects.create(
+        pay_rec = PaymentRecord.objects.create(
             payment_intent_id=f"REP-{uuid.uuid4().hex[:10].upper()}",
             provider=method,
             user=request.user,
@@ -638,7 +650,17 @@ class ContractRepayView(APIView):
             title=f"To‘lov qabul qilindi ({applied:,} so‘m)",
             body_masked=f"Shartnoma #{contract.contract_number} qoldig‘i: {contract.remaining_balance:,} so‘m. Erta to‘lov komissiyasi: 0 so‘m.",
         )
-        return Response({"ok": True, "applied_amount": applied, "early_fee": 0, "remaining_balance": contract.remaining_balance, "contract_status": contract.status})
+        return Response(
+            {
+                "ok": True,
+                "payment_id": str(pay_rec.id),
+                "receipt_url": f"/api/v1/finance/payments/{pay_rec.id}/receipt/",
+                "applied_amount": applied,
+                "early_fee": 0,
+                "remaining_balance": contract.remaining_balance,
+                "contract_status": contract.status,
+            }
+        )
 
 
 class SelectBankOfferView(APIView):
@@ -779,9 +801,89 @@ class ReconciliationAdminView(APIView):
     def get(self, request):
         recs = ReconciliationRecord.objects.all()[:25]
         from apps.commerce.models import SellerOrder
+
         payouts = SellerOrder.objects.select_related("store", "master_order").all()[:30]
+
+        today = timezone.now().date()
+        succeeded_qs = PaymentRecord.objects.filter(status="SUCCEEDED")
+        total_collected = succeeded_qs.aggregate(total=Sum("amount"))["total"] or 0
+        today_collected = succeeded_qs.filter(created_at__date=today).aggregate(total=Sum("amount"))["total"] or 0
+        pending_count = PaymentRecord.objects.filter(status="PENDING").count()
+        cancelled_count = PaymentRecord.objects.filter(status__in=["CANCELLED", "FAILED"]).count()
+
+        provider_rows = (
+            succeeded_qs.values("provider")
+            .annotate(total_amount=Sum("amount"), tx_count=Count("id"))
+            .order_by("-total_amount")
+        )
+        provider_breakdown = [
+            {
+                "provider": row["provider"],
+                "total_amount_uzs": int(row["total_amount"] or 0),
+                "tx_count": int(row["tx_count"] or 0),
+                "psp_settled_count": PspTransaction.objects.filter(
+                    psp_provider=row["provider"], action_stage="PERFORMED"
+                ).count(),
+                "psp_cancelled_count": PspTransaction.objects.filter(
+                    psp_provider=row["provider"], action_stage="CANCELLED"
+                ).count(),
+            }
+            for row in provider_rows
+        ]
+
+        active_debt_uzs = (
+            InstallmentContract.objects.filter(status__in=[ContractStatus.ACTIVE, ContractStatus.OVERDUE])
+            .aggregate(total=Sum("remaining_balance"))["total"]
+            or 0
+        )
+        overdue_debt_uzs = (
+            InstallmentContract.objects.filter(status=ContractStatus.OVERDUE)
+            .aggregate(total=Sum("remaining_balance"))["total"]
+            or 0
+        )
+        active_contracts_count = InstallmentContract.objects.filter(
+            status__in=[ContractStatus.ACTIVE, ContractStatus.OVERDUE]
+        ).count()
+        overdue_contracts_count = InstallmentContract.objects.filter(status=ContractStatus.OVERDUE).count()
+
+        recent_payments = PaymentRecord.objects.select_related("user", "order", "contract")[:30]
+
         return Response(
             {
+                "finance_report": {
+                    "total_collected_uzs": int(total_collected),
+                    "today_collected_uzs": int(today_collected),
+                    "succeeded_payments_count": succeeded_qs.count(),
+                    "pending_payments_count": pending_count,
+                    "cancelled_payments_count": cancelled_count,
+                    "active_portfolio_debt_uzs": int(active_debt_uzs),
+                    "overdue_portfolio_debt_uzs": int(overdue_debt_uzs),
+                    "active_contracts_count": active_contracts_count,
+                    "overdue_contracts_count": overdue_contracts_count,
+                    "provider_breakdown": provider_breakdown,
+                },
+                "recent_payments": [
+                    {
+                        "id": str(p.id),
+                        "payment_intent_id": p.payment_intent_id,
+                        "provider": p.provider,
+                        "customer_name": p.user.full_name if p.user else "—",
+                        "customer_phone": mask_value(p.user.phone, 4, 2) if p.user else "—",
+                        "target_ref": (
+                            p.contract.contract_number
+                            if p.contract
+                            else (p.order.order_number if p.order else p.reconciliation_ref)
+                        ),
+                        "target_kind": "Nasiya to‘lovi" if p.contract else ("Buyurtma" if p.order else "To‘lov"),
+                        "amount": p.amount,
+                        "status": p.status,
+                        "reconciliation_ref": p.reconciliation_ref,
+                        "receipt_url": f"/api/v1/finance/payments/{p.id}/receipt/",
+                        "is_demo": p.is_demo,
+                        "created_at": p.created_at,
+                    }
+                    for p in recent_payments
+                ],
                 "reconciliations": [
                     {
                         "id": str(r.id),
@@ -922,8 +1024,12 @@ class ClickMerchantWebhookView(APIView):
     authentication_classes = []
     permission_classes = [permissions.AllowAny]
 
-    def post(self, request):
-        result = process_click_webhook(request.data)
+    def post(self, request, default_action=None):
+        raw = request.data
+        payload = raw.dict() if hasattr(raw, "dict") else (dict(raw) if isinstance(raw, dict) else {})
+        if default_action is not None and payload.get("action") in (None, ""):
+            payload["action"] = str(default_action)
+        result = process_click_webhook(payload)
         return Response(result, status=status.HTTP_200_OK)
 
 
@@ -937,6 +1043,165 @@ class PaymeMerchantRpcView(APIView):
         auth_header = request.META.get("HTTP_AUTHORIZATION", "")
         result = process_payme_rpc(request.data, auth_header)
         return Response(result, status=status.HTTP_200_OK)
+
+
+class PaynetUwsWebhookView(APIView):
+    """Official Paynet UWS JSON-RPC endpoint (GetInformation, PerformTransaction, CheckTransaction, CancelTransaction, GetStatement)."""
+
+    authentication_classes = []
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        auth_header = request.META.get("HTTP_AUTHORIZATION", "")
+        client_ip = get_client_ip(request)
+        result, http_status = process_paynet_uws(
+            request.data,
+            auth_header=auth_header,
+            client_ip=client_ip,
+        )
+        return Response(result, status=http_status)
+
+
+class PaymentReceiptView(APIView):
+    """Electronic Payment Receipt (Elektron chek) JSON & printable HTML endpoint."""
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def perform_content_negotiation(self, request, force=False):
+        if (request.query_params.get("view") or request.query_params.get("format") or "").lower() == "html":
+            from rest_framework.renderers import BaseRenderer
+
+            class _HtmlBypassRenderer(BaseRenderer):
+                media_type = "text/html"
+                format = "html"
+
+                def render(self, data, accepted_media_type=None, renderer_context=None):
+                    return data
+
+            return (_HtmlBypassRenderer(), "text/html")
+        return super().perform_content_negotiation(request, force=force)
+
+    def get(self, request, pk):
+        pay = (
+            PaymentRecord.objects.select_related("user", "order", "contract")
+            .filter(id=pk)
+            .first()
+        )
+        if not pay:
+            return Response({"detail": "To‘lov cheki topilmadi."}, status=status.HTTP_404_NOT_FOUND)
+
+        is_ops = request.user.role in (
+            ADMIN_ROLES | {"FINANCE_OPERATIONS", "FINANCE_OFFICER", "AUDITOR", "SUPPORT_AGENT"}
+        )
+        if pay.user_id != request.user.id and not is_ops:
+            return Response({"detail": "Ushbu elektron chekni ko‘rish huquqingiz yo‘q."}, status=status.HTTP_403_FORBIDDEN)
+
+        psp_tx = (
+            PspTransaction.objects.filter(
+                Q(order=pay.order, order__isnull=False) | Q(contract=pay.contract, contract__isnull=False),
+                psp_provider=pay.provider,
+            )
+            .order_by("-created_at")
+            .first()
+        )
+
+        if pay.contract:
+            target_type = "Nasiya shartnomasi to‘lovi"
+            target_number = pay.contract.contract_number
+            remaining_balance = pay.contract.remaining_balance
+            contract_status = pay.contract.status
+        elif pay.order:
+            target_type = "Buyurtma to‘lovi"
+            target_number = pay.order.order_number
+            remaining_balance = 0
+            contract_status = pay.order.status
+        else:
+            target_type = "To‘lov"
+            target_number = pay.reconciliation_ref or pay.payment_intent_id
+            remaining_balance = 0
+            contract_status = pay.status
+
+        verification_code = hash_identifier(f"{pay.id}:{pay.payment_intent_id}:{pay.amount}")[:12].upper()
+        receipt_number = f"CHK-{str(pay.id).split('-')[0].upper()}"
+        receipt_data = {
+            "receipt_id": str(pay.id),
+            "receipt_number": receipt_number,
+            "payment_intent_id": pay.payment_intent_id,
+            "provider": pay.provider,
+            "external_trans_id": psp_tx.external_trans_id if psp_tx else pay.reconciliation_ref,
+            "amount_uzs": pay.amount,
+            "status": pay.status,
+            "customer_name": pay.user.full_name if pay.user else "—",
+            "customer_phone_masked": mask_value(pay.user.phone, 4, 2) if pay.user else "—",
+            "target_type": target_type,
+            "target_number": target_number,
+            "remaining_balance_after": remaining_balance,
+            "contract_status": contract_status,
+            "reconciliation_ref": pay.reconciliation_ref,
+            "paid_at": pay.created_at,
+            "verification_code": verification_code,
+            "is_demo": pay.is_demo,
+        }
+
+        if (request.query_params.get("view") or request.query_params.get("format") or "").lower() == "html":
+            badge_text = "NAMUNA / SANDBOX CHEK" if pay.is_demo else "RASMIY ELEKTRON CHEK"
+            paid_dt = timezone.localtime(pay.created_at).strftime("%Y-%m-%d %H:%M:%S")
+            html = f"""<!DOCTYPE html>
+<html lang="uz">
+<head>
+  <meta charset="UTF-8">
+  <title>Elektron chek #{escape(receipt_number)} — ZARVON</title>
+  <style>
+    body{{font-family:Inter,Arial,sans-serif;background:#f4f6f9;color:#10223a;margin:0;padding:24px;}}
+    .receipt{{max-width:520px;margin:0 auto;background:#fff;border:1px solid #d7e0eb;border-radius:16px;padding:28px;box-shadow:0 8px 24px rgba(16,34,58,.08);}}
+    .hdr{{display:flex;justify-content:space-between;align-items:center;border-bottom:2px dashed #cbd5e1;padding-bottom:14px;margin-bottom:16px;}}
+    .brand{{font-size:20px;font-weight:800;color:#17365d;letter-spacing:.04em;}}
+    .tag{{font-size:11px;font-weight:700;padding:4px 10px;border-radius:999px;background:#fef3c7;color:#92400e;}}
+    .amt{{text-align:center;font-size:28px;font-weight:800;color:#0f766e;margin:12px 0 18px;}}
+    table{{width:100%;border-collapse:collapse;font-size:14px;}}
+    td{{padding:8px 0;border-bottom:1px solid #eef2f7;}}
+    td:first-child{{color:#64748b;}}
+    td:last-child{{text-align:right;font-weight:600;}}
+    .ftr{{margin-top:18px;padding-top:12px;border-top:2px dashed #cbd5e1;font-size:12px;color:#64748b;display:flex;justify-content:space-between;align-items:center;}}
+    .btn-print{{margin-top:16px;width:100%;padding:11px 16px;border:none;border-radius:10px;background:#17365d;color:#fff;font-weight:700;cursor:pointer;font-size:14px;}}
+    @media print{{.btn-print{{display:none;}}body{{background:#fff;padding:0;}}.receipt{{box-shadow:none;border:none;}}}}
+  </style>
+</head>
+<body>
+  <div class="receipt">
+    <div class="hdr">
+      <div>
+        <div class="brand">ZARVON PAY</div>
+        <div style="font-size:12px;color:#64748b;">Elektron to‘lov kvitansiyasi</div>
+      </div>
+      <span class="tag">{escape(badge_text)}</span>
+    </div>
+    <div class="amt">{pay.amount:,} so‘m</div>
+    <table>
+      <tr><td>Chek raqami</td><td>{escape(receipt_number)}</td></tr>
+      <tr><td>To‘lov ID</td><td>{escape(pay.payment_intent_id)}</td></tr>
+      <tr><td>Provayder</td><td>{escape(pay.provider)}</td></tr>
+      <tr><td>Tashqi tranzaksiya ID</td><td>{escape(receipt_data['external_trans_id'])}</td></tr>
+      <tr><td>To‘lov maqsadi</td><td>{escape(target_type)}</td></tr>
+      <tr><td>Hujjat / Shartnoma</td><td>{escape(target_number)}</td></tr>
+      <tr><td>Mijoz</td><td>{escape(receipt_data['customer_name'])}</td></tr>
+      <tr><td>Telefon</td><td>{escape(receipt_data['customer_phone_masked'])}</td></tr>
+      <tr><td>Sana va vaqt</td><td>{escape(paid_dt)}</td></tr>
+      <tr><td>Holati</td><td>{escape(pay.status)}</td></tr>
+      <tr><td>Qolgan nasiya qoldig‘i</td><td>{remaining_balance:,} so‘m</td></tr>
+      <tr><td>Shartnoma holati</td><td>{escape(contract_status)}</td></tr>
+    </table>
+    <div class="ftr">
+      <span>Tekshiruv kodi: <strong>{escape(verification_code)}</strong></span>
+      <span>ZARVON Fintech</span>
+    </div>
+    <button class="btn-print" onclick="window.print()">🖨 Chop etish / PDF sifatida saqlash</button>
+  </div>
+</body>
+</html>"""
+            return HttpResponse(html, content_type="text/html; charset=utf-8")
+
+        return Response(receipt_data)
 
 
 class PspCheckoutAndSimulatorView(APIView):
@@ -1023,6 +1288,7 @@ class PspCheckoutAndSimulatorView(APIView):
 
         # Sandbox Protocol Execution — exercises the real cryptographic verification paths!
         protocol_trace = []
+        settled_payment_id = None
         if psp_provider == "Click":
             click_tx_id = str(int(timezone.now().timestamp() * 1000))[-10:]
             sign_time = timezone.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -1075,6 +1341,9 @@ class PspCheckoutAndSimulatorView(APIView):
                 }
             )
             protocol_trace.append({"step": "CLICK_COMPLETE (action=1)", "response": comp_resp})
+            if comp_resp.get("error") != 0:
+                return Response({"detail": comp_resp.get("error_note"), "trace": protocol_trace}, status=status.HTTP_400_BAD_REQUEST)
+            settled_payment_id = comp_resp.get("payment_id")
         elif psp_provider == "Payme":
             payme_id = f"pm_{uuid.uuid4().hex[:16]}"
             auth_hdr = "Basic " + base64.b64encode(f"Paycom:{settings.PAYME_CASHBOX_KEY}".encode("utf-8")).decode("utf-8")
@@ -1096,6 +1365,12 @@ class PspCheckoutAndSimulatorView(APIView):
                 {"step": "PAYME CreateTransaction (state=1)", "response": r2},
                 {"step": "PAYME PerformTransaction (state=2)", "response": r3},
             ]
+            if r1.get("error") or r2.get("error") or r3.get("error"):
+                err = r1.get("error") or r2.get("error") or r3.get("error")
+                msg_obj = err.get("message")
+                detail = msg_obj.get("uz") if isinstance(msg_obj, dict) else str(msg_obj or "Payme xatoligi")
+                return Response({"detail": detail, "trace": protocol_trace}, status=status.HTTP_400_BAD_REQUEST)
+            settled_payment_id = ((r3.get("result") or {}).get("settlement") or {}).get("payment_id")
         elif psp_provider == "Uzum Bank":
             uz_trans_id = f"uzm-{uuid.uuid4().hex[:12]}"
             uz_auth = "Basic " + base64.b64encode(f"{settings.UZUM_SERVICE_ID}:{settings.UZUM_SECRET_KEY}".encode("utf-8")).decode("utf-8")
@@ -1108,6 +1383,44 @@ class PspCheckoutAndSimulatorView(APIView):
                 {"step": "UZUM /create (tiyin)", "response": u2},
                 {"step": "UZUM /confirm (SETTLED)", "response": u3},
             ]
+            if u2.get("status") == "FAILED" or u3.get("status") == "FAILED":
+                return Response({"detail": u3.get("errorMessage") or u2.get("errorMessage") or "Uzum Bank xatoligi", "trace": protocol_trace}, status=status.HTTP_400_BAD_REQUEST)
+            settled_payment_id = u3.get("payment_id")
+        elif psp_provider == "Paynet":
+            paynet_tx_id = int(timezone.now().timestamp() * 1000) % 1000000000
+            amount_tiyin = req_amount * 100
+            p1, _ = process_paynet_uws(
+                {"jsonrpc": "2.0", "id": 1, "method": "GetInformation", "params": {"serviceId": settings.PAYNET_SERVICE_ID, "fields": {"order_id": reference}}},
+                skip_auth_for_trusted_sandbox=True,
+            )
+            p2, _ = process_paynet_uws(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 2,
+                    "method": "PerformTransaction",
+                    "params": {
+                        "serviceId": settings.PAYNET_SERVICE_ID,
+                        "transactionId": paynet_tx_id,
+                        "transactionTime": timezone.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        "amount": amount_tiyin,
+                        "fields": {"order_id": reference},
+                    },
+                },
+                skip_auth_for_trusted_sandbox=True,
+            )
+            p3, _ = process_paynet_uws(
+                {"jsonrpc": "2.0", "id": 3, "method": "CheckTransaction", "params": {"serviceId": settings.PAYNET_SERVICE_ID, "transactionId": paynet_tx_id}},
+                skip_auth_for_trusted_sandbox=True,
+            )
+            protocol_trace = [
+                {"step": "PAYNET GetInformation", "response": p1},
+                {"step": "PAYNET PerformTransaction", "response": p2},
+                {"step": "PAYNET CheckTransaction", "response": p3},
+            ]
+            if p1.get("error") or p2.get("error"):
+                err = p1.get("error") or p2.get("error")
+                return Response({"detail": err.get("message") or "Paynet xatoligi", "trace": protocol_trace}, status=status.HTTP_400_BAD_REQUEST)
+            settled_payment_id = (p2.get("result") or {}).get("payment_id")
         else:
             ext_id = f"{psp_provider[:3].upper()}-{uuid.uuid4().hex[:10].upper()}"
             PspTransaction.objects.create(
@@ -1133,6 +1446,14 @@ class PspCheckoutAndSimulatorView(APIView):
                 external_trans_id=ext_id,
             )
             protocol_trace = [{"step": f"{psp_provider} Instant Tokenized Settlement", "response": res}]
+            settled_payment_id = res.get("payment_id")
+
+        if not settled_payment_id:
+            qs_pay = PaymentRecord.objects.filter(provider=psp_provider)
+            qs_pay = qs_pay.filter(order=target_obj) if target_kind == "ORDER" else qs_pay.filter(contract=target_obj)
+            latest_pay = qs_pay.order_by("-created_at").first()
+            if latest_pay:
+                settled_payment_id = str(latest_pay.id)
 
         AuditLog.record(
             actor=request.user,
@@ -1149,6 +1470,8 @@ class PspCheckoutAndSimulatorView(APIView):
                 "psp_provider": psp_provider,
                 "reference": reference,
                 "amount_uzs": req_amount,
+                "payment_id": settled_payment_id,
+                "receipt_url": f"/api/v1/finance/payments/{settled_payment_id}/receipt/" if settled_payment_id else None,
                 "card_masked": used_card.card_masked_pan if used_card else None,
                 "checkout_url": checkout_payload["checkout_url"],
                 "links": checkout_payload["links"],

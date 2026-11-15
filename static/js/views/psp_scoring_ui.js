@@ -20,14 +20,14 @@ export function renderDueAlertsHtml(dueAlerts = []) {
         d.urgency === "OVERDUE" || d.urgency === "DUE_TODAY"
           ? "due-alert-overdue"
           : d.urgency === "DUE_SOON_3D"
-          ? "due-alert-soon"
-          : "due-alert-upcoming";
+            ? "due-alert-soon"
+            : "due-alert-upcoming";
       const msg =
         d.days_until_due < 0
           ? `⚠ Muddati ${Math.abs(d.days_until_due)} kun o‘tgan!`
           : d.days_until_due === 0
-          ? `🔴 BUGUN to‘lov kuni!`
-          : `⏰ To‘lovga ${d.days_until_due} kun qoldi (${esc(d.due_date)})`;
+            ? `🔴 BUGUN to‘lov kuni!`
+            : `⏰ To‘lovga ${d.days_until_due} kun qoldi (${esc(d.due_date)})`;
       return `
         <div class="due-alert-banner ${cls} mb-3 tabular">
           <div>
@@ -48,13 +48,13 @@ function renderCreditPolicyBannerHtml(creditPolicy, hasBureauReport = true) {
   const bg = creditPolicy.has_overdue || creditPolicy.has_mib_debt
     ? "var(--danger-bg)"
     : isBlocked
-    ? "rgba(217, 119, 6, 0.14)"
-    : "var(--success-bg, rgba(21, 128, 61, 0.10))";
+      ? "rgba(217, 119, 6, 0.14)"
+      : "var(--success-bg, rgba(21, 128, 61, 0.10))";
   const border = creditPolicy.has_overdue || creditPolicy.has_mib_debt
     ? "var(--danger-fg, #dc2626)"
     : isBlocked
-    ? "#d97706"
-    : "var(--success-fg, #15803d)";
+      ? "#d97706"
+      : "var(--success-fg, #15803d)";
   const modeBadgeClass = isBlocked ? "badge-danger" : "badge-success";
 
   return `
@@ -64,18 +64,16 @@ function renderCreditPolicyBannerHtml(creditPolicy, hasBureauReport = true) {
           <span class="badge ${modeBadgeClass}">${esc(creditPolicy.trading_mode_label || (isBlocked ? "Faqat naqd savdo" : "Nasiya ochiq"))}</span>
           <strong style="margin-left:6px;">${esc(creditPolicy.credit_condition_label || creditPolicy.credit_condition_code)}</strong>
         </div>
-        ${
-          hasBureauReport
-            ? `<span class="badge badge-navy">🛡 Nazoratchiga xabar yuborilgan</span>`
-            : ""
-        }
+        ${hasBureauReport
+      ? `<span class="badge badge-navy">🛡 Nazoratchiga xabar yuborilgan</span>`
+      : ""
+    }
       </div>
       <div class="text-sm mt-2">${esc(creditPolicy.credit_condition_detail || "")}</div>
-      ${
-        isBlocked && creditPolicy.block_reason
-          ? `<div class="text-xs fw-bold mt-1" style="color:var(--danger-fg, #b91c1c);">⛔ Savdo cheklovi: ${esc(creditPolicy.block_reason)}</div>`
-          : ""
-      }
+      ${isBlocked && creditPolicy.block_reason
+      ? `<div class="text-xs fw-bold mt-1" style="color:var(--danger-fg, #b91c1c);">⛔ Savdo cheklovi: ${esc(creditPolicy.block_reason)}</div>`
+      : ""
+    }
     </div>
   `;
 }
@@ -146,14 +144,13 @@ export function renderKatmMibDstiReportHtml(rep, creditPolicy = null) {
         </div>
       </div>
 
-      ${
-        rep.mib_details && rep.mib_details.length
-          ? `<div class="mb-3" style="padding:10px;border-radius:10px;background:var(--danger-bg);color:var(--danger-fg);">
+      ${rep.mib_details && rep.mib_details.length
+      ? `<div class="mb-3" style="padding:10px;border-radius:10px;background:var(--danger-bg);color:var(--danger-fg);">
                <strong>⛔ MIB bo‘yicha aniqlangan ijro hujjatlari:</strong>
                ${rep.mib_details.map((m) => `<div class="text-xs mt-1">• ${esc(m.case_no)}: ${esc(m.reason)} — <strong>${fmtUzs(m.debt_uzs)}</strong></div>`).join("")}
              </div>`
-          : ""
-      }
+      : ""
+    }
 
       <div class="grid-2">
         <div>
@@ -162,15 +159,14 @@ export function renderKatmMibDstiReportHtml(rep, creditPolicy = null) {
             <table class="data-table text-xs">
               <thead><tr><th>Tashkilot / Bank</th><th>Turi</th><th>Oylik</th><th>Qoldiq</th><th>Holat</th></tr></thead>
               <tbody>
-                ${
-                  (rep.external_obligations_breakdown || []).length
-                    ? rep.external_obligations_breakdown
-                        .map(
-                          (o) => `<tr><td>${esc(o.lender)}</td><td>${esc(o.type)}</td><td>${fmtUzs(o.monthly_uzs)}</td><td>${fmtUzs(o.remaining_uzs)}</td><td>${statusBadge(o.status)}</td></tr>`
-                        )
-                        .join("")
-                    : `<tr><td colspan="5">KATM bo‘yicha boshqa faol kredit topilmadi ✓</td></tr>`
-                }
+                ${(rep.external_obligations_breakdown || []).length
+      ? rep.external_obligations_breakdown
+        .map(
+          (o) => `<tr><td>${esc(o.lender)}</td><td>${esc(o.type)}</td><td>${fmtUzs(o.monthly_uzs)}</td><td>${fmtUzs(o.remaining_uzs)}</td><td>${statusBadge(o.status)}</td></tr>`
+        )
+        .join("")
+      : `<tr><td colspan="5">KATM bo‘yicha boshqa faol kredit topilmadi ✓</td></tr>`
+    }
               </tbody>
             </table>
           </div>
@@ -198,11 +194,10 @@ export function renderSavedCardsHtml(cards = []) {
       </div>
 
       <div class="grid-2 mb-3">
-        ${
-          cards.length
-            ? cards
-                .map(
-                  (c) => `
+        ${cards.length
+      ? cards
+        .map(
+          (c) => `
               <div class="card" style="background:var(--bg-subtle);border:${c.is_default ? "2px solid var(--gold-500)" : "1px solid var(--border-color)"};">
                 <div class="flex-between">
                   <div>
@@ -217,10 +212,10 @@ export function renderSavedCardsHtml(cards = []) {
                   </div>
                 </div>
               </div>`
-                )
-                .join("")
-            : `<p class="text-muted text-sm">Hali bog‘langan karta yo‘q.</p>`
-        }
+        )
+        .join("")
+      : `<p class="text-muted text-sm">Hali bog‘langan karta yo‘q.</p>`
+    }
       </div>
 
       <form id="add-card-form" class="card" style="background:var(--navy-50);">
@@ -288,6 +283,59 @@ export function wireSavedCardsActions(rootEl, onRefresh) {
   });
 }
 
+export async function openElectronicReceiptModal(paymentId) {
+  if (!paymentId) return;
+  openModal(
+    "🧾 Elektron to‘lov cheki",
+    `<div class="text-muted text-sm">Elektron chek yuklanmoqda...</div>`
+  );
+  try {
+    const r = await apiFetch(`/api/v1/finance/payments/${paymentId}/receipt/`);
+    const htmlUrl = `/api/v1/finance/payments/${encodeURIComponent(paymentId)}/receipt/?view=html`;
+    openModal(
+      `🧾 Elektron chek #${esc(r.receipt_number)}`,
+      `
+        <div class="card mb-3" style="background:var(--bg-subtle);border:1px dashed var(--border);">
+          <div class="flex-between mb-2">
+            <strong>ZARVON PAY</strong>
+            <span class="badge ${r.is_demo ? "badge-warning" : "badge-success"}">${r.is_demo ? "NAMUNA / SANDBOX" : "RASMIY CHEK"}</span>
+          </div>
+          <div class="tabular fw-bold" style="font-size:1.6rem;color:#0f766e;text-align:center;margin:10px 0 14px;">
+            ${fmtUzs(r.amount_uzs)}
+          </div>
+          <div class="table-wrap">
+            <table class="data-table text-sm tabular">
+              <tbody>
+                <tr><td class="text-muted">Chek raqami</td><td class="fw-bold" style="text-align:right;">${esc(r.receipt_number)}</td></tr>
+                <tr><td class="text-muted">To‘lov ID</td><td style="text-align:right;">${esc(r.payment_intent_id)}</td></tr>
+                <tr><td class="text-muted">Provayder</td><td class="fw-bold" style="text-align:right;">${esc(r.provider)}</td></tr>
+                <tr><td class="text-muted">Tashqi tranzaksiya</td><td style="text-align:right;">${esc(r.external_trans_id || "—")}</td></tr>
+                <tr><td class="text-muted">Maqsadi</td><td style="text-align:right;">${esc(r.target_type)} (${esc(r.target_number)})</td></tr>
+                <tr><td class="text-muted">Mijoz</td><td style="text-align:right;">${esc(r.customer_name)} (${esc(r.customer_phone_masked)})</td></tr>
+                <tr><td class="text-muted">Sana</td><td style="text-align:right;">${fmtDate(r.paid_at)}</td></tr>
+                <tr><td class="text-muted">Holat</td><td style="text-align:right;">${statusBadge(r.status)}</td></tr>
+                <tr><td class="text-muted">Qolgan nasiya qoldig‘i</td><td class="fw-bold" style="text-align:right;">${fmtUzs(r.remaining_balance_after || 0)}</td></tr>
+                <tr><td class="text-muted">Tekshiruv kodi</td><td style="text-align:right;"><code>${esc(r.verification_code)}</code></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="flex-gap">
+          <a href="${esc(htmlUrl)}" target="_blank" rel="noopener" class="btn btn-primary" style="flex:1;text-align:center;">🖨 Chop etish / PDF sahifasi</a>
+          <button type="button" id="receipt-modal-close" class="btn btn-outline">Yopish</button>
+        </div>
+      `
+    );
+    document.getElementById("receipt-modal-close")?.addEventListener("click", closeModal);
+  } catch (err) {
+    openModal(
+      "🧾 Elektron chek",
+      `<p class="text-danger">${esc(err.message)}</p><button type="button" id="receipt-err-close" class="btn btn-outline mt-2">Yopish</button>`
+    );
+    document.getElementById("receipt-err-close")?.addEventListener("click", closeModal);
+  }
+}
+
 export function openPspPayModal({ reference, contractId = null, suggestedAmount, cards = [], allowEarly = true, onSuccess }) {
   let selectedPsp = "Payme";
   let selectedCardId = cards.find((c) => c.is_default)?.id || cards[0]?.id || "";
@@ -295,7 +343,7 @@ export function openPspPayModal({ reference, contractId = null, suggestedAmount,
     { id: "Payme", badge: "psp-chip-payme", title: "Payme", sub: "JSON-RPC 2.0 • 100 tiyin aniqlik" },
     { id: "Click", badge: "psp-chip-click", title: "Click", sub: "Prepare/Complete + MD5 imzo" },
     { id: "Uzum Bank", badge: "psp-chip-uzum", title: "Uzum Bank", sub: "Tezkor bank hamyoni" },
-    { id: "Paynet", badge: "psp-chip-paynet", title: "Paynet", sub: "Milliy to‘lov tarmog‘i" },
+    { id: "Paynet", badge: "psp-chip-paynet", title: "Paynet", sub: "UWS JSON-RPC • Milliy tarmoq" },
     { id: "Uzcard/Humo", badge: "", title: "Bog‘langan karta", sub: cards[0] ? cards[0].card_masked_pan : "Tokenizatsiya" },
   ];
 
@@ -305,37 +353,35 @@ export function openPspPayModal({ reference, contractId = null, suggestedAmount,
       <div class="text-xs text-muted mb-3">Sandbox PSP shlyuzi orqali real Click/Payme protokoli tekshiriladi va jadval yangilanadi.</div>
       <div class="psp-select-grid mb-3" id="psp-opt-grid">
         ${providers
-          .map(
-            (pr) => `
+      .map(
+        (pr) => `
           <button type="button" class="psp-option-card ${pr.id === selectedPsp ? "active" : ""}" data-psp-pick="${esc(pr.id)}">
             <span class="psp-chip ${pr.badge}" style="width:fit-content;">${esc(pr.title)}</span>
             <span class="text-xs text-muted">${esc(pr.sub)}</span>
           </button>`
-          )
-          .join("")}
+      )
+      .join("")}
       </div>
 
-      ${
-        cards.length
-          ? `<div class="form-group">
+      ${cards.length
+      ? `<div class="form-group">
                <label class="form-label" for="psp-card-sel">Saqlangan karta (ixtiyoriy)</label>
                <select id="psp-card-sel" class="form-control">
                  ${cards.map((c) => `<option value="${esc(c.id)}" ${c.id === selectedCardId ? "selected" : ""}>${esc(c.card_brand)} ${esc(c.card_masked_pan)} (${esc(c.expiry_masked)})</option>`).join("")}
                </select>
              </div>`
-          : ""
-      }
+      : ""
+    }
 
       <div class="form-group">
         <label class="form-label" for="psp-amt-in">To‘lov summasi (so‘m)</label>
         <input id="psp-amt-in" type="number" class="form-control tabular" value="${suggestedAmount}" min="1000">
       </div>
 
-      ${
-        allowEarly && contractId
-          ? `<label class="flex-gap text-sm mb-3"><input type="checkbox" id="psp-early-chk"> Muddatidan oldin qisman/to‘liq yopish (0% komissiya va jarima yo‘q)</label>`
-          : ""
-      }
+      ${allowEarly && contractId
+      ? `<label class="flex-gap text-sm mb-3"><input type="checkbox" id="psp-early-chk"> Muddatidan oldin qisman/to‘liq yopish (0% komissiya va jarima yo‘q)</label>`
+      : ""
+    }
 
       <div id="psp-modal-trace" class="mb-3"></div>
       <div class="flex-gap">
@@ -362,6 +408,7 @@ export function openPspPayModal({ reference, contractId = null, suggestedAmount,
     try {
       let msg = "";
       let traceHtml = "";
+      let paymentId = null;
       if (isEarly && contractId) {
         const er = await apiFetch(`/api/v1/finance/contracts/${contractId}/repay/`, {
           method: "POST",
@@ -372,24 +419,31 @@ export function openPspPayModal({ reference, contractId = null, suggestedAmount,
             idempotency_key: genIdempotencyKey("rep"),
           }),
         });
-        msg = `0% komissiya bilan yopildi! Qoldiq: ${fmtUzs(er.remaining_balance)}`;
+        paymentId = er.payment_id || null;
+        msg = `0% komissiya bilan to‘lov bajarildi! Qolgan qarz: ${fmtUzs(er.remaining_balance)}`;
       } else {
         const res = await apiFetch("/api/v1/finance/psp/checkout/", {
           method: "POST",
           body: JSON.stringify({ reference, psp_provider: selectedPsp, amount_uzs: amt, card_id: chosenCard }),
         });
+        paymentId = res.payment_id || null;
         msg = res.detail;
         const linkBtn = res.checkout_url
           ? `<div class="mt-2 mb-2"><a href="${esc(res.checkout_url)}" target="_blank" rel="noopener" class="btn btn-outline btn-sm">🔗 ${esc(selectedPsp)} Checkout havolasini ochish</a></div>`
           : "";
         traceHtml = `${linkBtn}<pre class="text-xs" style="background:var(--bg-subtle);padding:8px;border-radius:8px;overflow:auto;max-height:160px;">${esc(JSON.stringify(res.trace, null, 2))}</pre>`;
       }
-      document.getElementById("psp-modal-trace").innerHTML = `<span class="badge badge-success mb-1">✓ ${esc(msg)}</span>${traceHtml}`;
+      const receiptBtn = paymentId
+        ? `<div class="mt-2 mb-2"><button type="button" id="psp-open-receipt-btn" class="btn btn-primary btn-sm">🧾 Elektron chekni ochish</button></div>`
+        : "";
+      document.getElementById("psp-modal-trace").innerHTML = `<span class="badge badge-success mb-1">✓ ${esc(msg)}</span>${receiptBtn}${traceHtml}`;
+      const cancelBtn = document.getElementById("psp-cancel-btn");
+      if (cancelBtn) cancelBtn.textContent = "Yopish";
+      if (paymentId) {
+        document.getElementById("psp-open-receipt-btn")?.addEventListener("click", () => openElectronicReceiptModal(paymentId));
+      }
       showToast(msg, "success");
-      setTimeout(() => {
-        closeModal();
-        if (onSuccess) onSuccess();
-      }, 900);
+      if (onSuccess) onSuccess();
     } catch (err) {
       showToast(err.message, "error");
       btn.disabled = false;
