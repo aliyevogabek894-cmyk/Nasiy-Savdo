@@ -6,6 +6,7 @@ from apps.finance.models import (
     ExternalScoringReport,
     InstallmentContract,
     InstallmentScheduleItem,
+    KycDocument,
     PaymentCard,
     PaymentRecord,
     PspTransaction,
@@ -83,3 +84,11 @@ class ExternalScoringReportAdmin(admin.ModelAdmin):
     list_filter = ("decision", "mib_status", "is_demo")
     search_fields = ("check_reference", "user__phone", "user__full_name")
     readonly_fields = ("id", "created_at")
+
+
+@admin.register(KycDocument)
+class KycDocumentAdmin(admin.ModelAdmin):
+    list_display = ("user", "doc_type", "status", "reviewer", "file_size_bytes", "created_at", "reviewed_at")
+    list_filter = ("doc_type", "status", "created_at")
+    search_fields = ("user__phone", "user__full_name", "original_filename")
+    readonly_fields = ("id", "created_at", "reviewed_at")

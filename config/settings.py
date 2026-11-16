@@ -40,7 +40,12 @@ PLAYMOBILE_URL = os.environ.get("PLAYMOBILE_URL", "")
 PLAYMOBILE_USERNAME = os.environ.get("PLAYMOBILE_USERNAME", "")
 PLAYMOBILE_PASSWORD = os.environ.get("PLAYMOBILE_PASSWORD", "")
 KATM_API_URL = os.environ.get("KATM_API_URL", "")
+KATM_API_TOKEN = os.environ.get("KATM_API_TOKEN", "")
 MIB_API_URL = os.environ.get("MIB_API_URL", "")
+MIB_API_TOKEN = os.environ.get("MIB_API_TOKEN", "")
+MYID_API_URL = os.environ.get("MYID_API_URL", "")
+MYID_CLIENT_ID = os.environ.get("MYID_CLIENT_ID", "")
+MYID_CLIENT_SECRET = os.environ.get("MYID_CLIENT_SECRET", "")
 
 ALLOWED_HOSTS = [
     h.strip()

@@ -2,14 +2,17 @@
 import base64
 from datetime import timedelta
 import json
+from pathlib import Path
 import uuid
+from PIL import Image, ImageOps, UnidentifiedImageError
 from django.conf import settings
 from django.db import transaction
 from django.db.models import Count, Q, Sum
-from django.http import HttpResponse
+from django.http import FileResponse, HttpResponse
 from django.utils import timezone
 from django.utils.html import escape
 from rest_framework import permissions, status
+from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -31,6 +34,7 @@ from apps.finance.models import (
     InstallmentContract,
     InstallmentPlan,
     InstallmentScheduleItem,
+    KycDocument,
     LimitEvent,
     PaymentCard,
     PaymentRecord,
@@ -218,16 +222,18 @@ class KycAndScoringView(APIView):
             correlation_id=f"MYID-{uuid.uuid4().hex[:8].upper()}",
         )
 
-        # Run full KATM + MIB + 50% DSTI scoring engine
+        # Run full MyID + KATM + MIB + 50% DSTI scoring engine
         ext = run_katm_and_mib_scoring(
             user=user,
             pinfl=pinfl,
             inn=inn,
+            passport=passport,
             birth_year=birth_year,
             monthly_income_uzs=monthly_income_uzs,
             requested_purchase_uzs=requested_purchase_uzs,
             requested_months=requested_months,
             scenario=scenario,
+            liveness_passed=liveness_ok,
         )
 
         rec_tier = "Max" if ext.recommended_limit_uzs >= 20_000_000 else ("Plus" if ext.recommended_limit_uzs >= 8_000_000 else "Start")
@@ -318,6 +324,7 @@ class KycAndScoringView(APIView):
                     "recommended_limit_uzs": ext.recommended_limit_uzs,
                     "decision": ext.decision,
                     "decision_reasons": ext.decision_reasons,
+                    "bureau_trace": ext.bureau_trace,
                     "is_demo": ext.is_demo,
                 },
             }
@@ -477,12 +484,29 @@ class CustomerFinanceCabinetView(APIView):
                 "recommended_limit_uzs": ext_rep.recommended_limit_uzs,
                 "decision": ext_rep.decision,
                 "decision_reasons": ext_rep.decision_reasons,
+                "bureau_trace": ext_rep.bureau_trace,
                 "is_demo": ext_rep.is_demo,
                 "created_at": ext_rep.created_at,
             }
             if ext_rep
             else None
         )
+        kyc_docs_data = [
+            {
+                "id": str(d.id),
+                "doc_type": d.doc_type,
+                "doc_type_label": d.get_doc_type_display(),
+                "status": d.status,
+                "status_label": d.get_status_display(),
+                "review_note": d.review_note,
+                "content_type": d.content_type,
+                "is_image": d.content_type.startswith("image/"),
+                "file_url": f"/api/v1/finance/kyc/documents/{d.id}/file/",
+                "created_at": d.created_at,
+                "reviewed_at": d.reviewed_at,
+            }
+            for d in KycDocument.objects.filter(user=user)[:15]
+        ]
         cards_data = [
             {
                 "id": str(cd.id),
@@ -515,6 +539,7 @@ class CustomerFinanceCabinetView(APIView):
                 "due_alerts": due_alerts,
                 "credit_policy": evaluate_customer_credit_policy(user),
                 "latest_scoring_report": latest_ext,
+                "kyc_documents": kyc_docs_data,
                 "payment_cards": cards_data,
                 "contracts": contracts_data,
                 "credit_applications": apps_data,
@@ -1741,6 +1766,7 @@ class AdminScoringReportsView(APIView):
                         "recommended_limit_uzs": r.recommended_limit_uzs,
                         "decision": r.decision,
                         "decision_reasons": r.decision_reasons,
+                        "bureau_trace": r.bureau_trace,
                         "external_obligations_breakdown": r.external_obligations_breakdown,
                         "mib_details": r.mib_details,
                         "is_demo": r.is_demo,
@@ -1748,6 +1774,27 @@ class AdminScoringReportsView(APIView):
                         "credit_policy": evaluate_customer_credit_policy(r.user),
                     }
                     for r in reports
+                ],
+                "kyc_documents": [
+                    {
+                        "id": str(d.id),
+                        "user_id": str(d.user_id),
+                        "customer_name": d.user.full_name,
+                        "customer_phone_masked": mask_value(d.user.phone, 4, 2),
+                        "customer_kyc_status": d.user.kyc_status,
+                        "doc_type": d.doc_type,
+                        "doc_type_label": d.get_doc_type_display(),
+                        "status": d.status,
+                        "status_label": d.get_status_display(),
+                        "review_note": d.review_note,
+                        "reviewer_name": d.reviewer.full_name if d.reviewer else None,
+                        "content_type": d.content_type,
+                        "is_image": d.content_type.startswith("image/"),
+                        "file_url": f"/api/v1/finance/kyc/documents/{d.id}/file/",
+                        "created_at": d.created_at,
+                        "reviewed_at": d.reviewed_at,
+                    }
+                    for d in KycDocument.objects.select_related("user", "reviewer").all()[:40]
                 ],
                 "supervisor_alerts": supervisor_alerts,
                 "customers_credit_overview": customers_credit_overview,
@@ -1862,3 +1909,258 @@ class UzumMerchantWebhookView(APIView):
         )
         http_status = 200 if res.get("status") != "FAILED" else (401 if res.get("errorCode") == "10001" else 400)
         return Response(res, status=http_status)
+
+
+KYC_VIEWER_ROLES = ADMIN_ROLES | {"RISK_MANAGER", "FINANCE_OFFICER", "FRAUD_ANALYST", "AUDITOR", "FINANCE_OPERATIONS"}
+
+
+def _serialize_kyc_doc(d: KycDocument) -> dict:
+    return {
+        "id": str(d.id),
+        "user_id": str(d.user_id),
+        "customer_name": d.user.full_name,
+        "customer_phone_masked": mask_value(d.user.phone, 4, 2),
+        "customer_kyc_status": d.user.kyc_status,
+        "doc_type": d.doc_type,
+        "doc_type_label": d.get_doc_type_display(),
+        "status": d.status,
+        "status_label": d.get_status_display(),
+        "review_note": d.review_note,
+        "reviewer_name": d.reviewer.full_name if d.reviewer else None,
+        "content_type": d.content_type,
+        "is_image": d.content_type.startswith("image/"),
+        "original_filename": d.original_filename,
+        "file_size_bytes": d.file_size_bytes,
+        "file_url": f"/api/v1/finance/kyc/documents/{d.id}/file/",
+        "created_at": d.created_at,
+        "reviewed_at": d.reviewed_at,
+    }
+
+
+class KycDocumentsView(APIView):
+    """Upload & list private KYC documents (Passport photos, Selfie, MIB PDF) stored in PRIVATE_MEDIA_ROOT."""
+
+    permission_classes = [permissions.IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser]
+    MAX_BYTES = 8 * 1024 * 1024
+    VALID_TYPES = {"PASSPORT_FRONT", "PASSPORT_BACK", "SELFIE", "MIB_CERT", "INCOME_PROOF"}
+
+    def get(self, request):
+        scope = (request.query_params.get("scope") or "").strip().lower()
+        is_reviewer = request.user.role in KYC_VIEWER_ROLES
+        if scope == "all" and is_reviewer:
+            qs = KycDocument.objects.select_related("user", "reviewer").all()
+            status_f = (request.query_params.get("status") or "").strip()
+            if status_f:
+                qs = qs.filter(status=status_f)
+            return Response({"documents": [_serialize_kyc_doc(d) for d in qs[:50]]})
+
+        docs = KycDocument.objects.select_related("user", "reviewer").filter(user=request.user)[:20]
+        return Response({"documents": [_serialize_kyc_doc(d) for d in docs]})
+
+    @transaction.atomic
+    def post(self, request):
+        doc_type = (request.data.get("doc_type") or "PASSPORT_FRONT").strip()
+        if doc_type not in self.VALID_TYPES:
+            return Response({"detail": "Noto‘g‘ri hujjat turi tanlandi."}, status=status.HTTP_400_BAD_REQUEST)
+
+        upload = request.FILES.get("file") or request.FILES.get("image")
+        if not upload:
+            return Response({"detail": "Hujjat yoki rasm faylini tanlang (file)."}, status=status.HTTP_400_BAD_REQUEST)
+        if upload.size > self.MAX_BYTES:
+            return Response({"detail": "Fayl hajmi 8 MB dan oshmasligi kerak."}, status=status.HTTP_400_BAD_REQUEST)
+
+        orig_name = (getattr(upload, "name", "") or "document")[:160]
+        is_pdf = orig_name.lower().endswith(".pdf") or getattr(upload, "content_type", "") == "application/pdf"
+
+        private_dir = Path(settings.PRIVATE_MEDIA_ROOT) / "kyc" / str(request.user.id)
+        private_dir.mkdir(parents=True, exist_ok=True)
+
+        if is_pdf:
+            raw_bytes = upload.read()
+            if not raw_bytes.startswith(b"%PDF-"):
+                return Response({"detail": "Yaroqsiz PDF fayl."}, status=status.HTTP_400_BAD_REQUEST)
+            filename = f"{uuid.uuid4().hex[:16]}.pdf"
+            dest_path = private_dir / filename
+            dest_path.write_bytes(raw_bytes)
+            stored_size = len(raw_bytes)
+            content_type = "application/pdf"
+        else:
+            try:
+                img = Image.open(upload)
+                img.verify()
+                upload.seek(0)
+                img = Image.open(upload)
+                img = ImageOps.exif_transpose(img)
+            except (UnidentifiedImageError, Exception):
+                return Response(
+                    {"detail": "Yaroqsiz rasm fayli. JPEG, PNG, WEBP yoki PDF yuklang."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info):
+                bg = Image.new("RGB", img.size, (255, 255, 255))
+                rgba = img.convert("RGBA")
+                bg.paste(rgba, mask=rgba.split()[-1])
+                clean_img = bg
+            else:
+                clean_img = img.convert("RGB")
+            clean_img.thumbnail((1600, 1600), Image.Resampling.LANCZOS)
+            filename = f"{uuid.uuid4().hex[:16]}.jpg"
+            dest_path = private_dir / filename
+            clean_img.save(dest_path, format="JPEG", quality=88, optimize=True)
+            stored_size = dest_path.stat().st_size
+            content_type = "image/jpeg"
+
+        rel_path = f"kyc/{request.user.id}/{filename}"
+        doc = KycDocument.objects.create(
+            user=request.user,
+            doc_type=doc_type,
+            file_rel_path=rel_path,
+            content_type=content_type,
+            original_filename=orig_name,
+            file_size_bytes=stored_size,
+            status="PENDING",
+        )
+        if request.user.kyc_status in {"UNVERIFIED", "REJECTED"}:
+            request.user.kyc_status = "PENDING"
+            request.user.save(update_fields=["kyc_status"])
+
+        AuditLog.record(
+            actor=request.user,
+            action="KYC_DOCUMENT_UPLOADED",
+            object_type="KycDocument",
+            object_id=doc.id,
+            reason=f"Hujjat yuklandi: {doc.get_doc_type_display()}",
+        )
+        return Response(
+            {
+                "ok": True,
+                "document": _serialize_kyc_doc(doc),
+                "kyc_status": request.user.kyc_status,
+                "detail": f"«{doc.get_doc_type_display()}» xavfsiz yopiq omborga yuklandi va Nazoratchi navbatiga qo‘shildi.",
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class KycDocumentFileView(APIView):
+    """Serve private KYC image/PDF exclusively to the document owner or authorized supervisors/auditors."""
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, pk):
+        doc = KycDocument.objects.select_related("user").filter(id=pk).first()
+        if not doc:
+            return Response({"detail": "Hujjat topilmadi."}, status=status.HTTP_404_NOT_FOUND)
+        is_allowed = (doc.user_id == request.user.id) or (request.user.role in KYC_VIEWER_ROLES)
+        if not is_allowed:
+            return Response({"detail": "Shaxsiy KYC hujjatini ko‘rish taqiqlangan (RBAC)."}, status=status.HTTP_403_FORBIDDEN)
+
+        private_root = Path(settings.PRIVATE_MEDIA_ROOT).resolve()
+        file_path = (private_root / doc.file_rel_path).resolve()
+        if not file_path.is_relative_to(private_root) or not file_path.exists():
+            return Response({"detail": "Fayl ombordan topilmadi."}, status=status.HTTP_404_NOT_FOUND)
+
+        resp = FileResponse(open(file_path, "rb"), content_type=doc.content_type)
+        resp["X-Content-Type-Options"] = "nosniff"
+        resp["Cache-Control"] = "no-store"
+        return resp
+
+
+class KycDocumentReviewView(APIView):
+    """Supervisor decision on uploaded Passport/Selfie/MIB docs: Approve Nasiya, Force Cash-Only, or Reject."""
+
+    permission_classes = [HasRolePermission]
+    allowed_roles = {"SUPER_ADMIN", "RISK_MANAGER", "FINANCE_OFFICER", "FRAUD_ANALYST", "FINANCE_OPERATIONS"}
+
+    @transaction.atomic
+    def post(self, request, pk):
+        doc = KycDocument.objects.select_for_update().select_related("user").filter(id=pk).first()
+        if not doc:
+            return Response({"detail": "KYC hujjati topilmadi."}, status=status.HTTP_404_NOT_FOUND)
+
+        decision = (request.data.get("decision") or "").strip().upper()
+        if decision not in {"APPROVED_NASIYA", "CASH_ONLY", "REJECTED"}:
+            return Response({"detail": "Qaror APPROVED_NASIYA, CASH_ONLY yoki REJECTED bo‘lishi kerak."}, status=status.HTTP_400_BAD_REQUEST)
+
+        note = (request.data.get("review_note") or "").strip()[:255]
+        approved_limit_raw = request.data.get("approved_limit_uzs")
+
+        doc.status = decision
+        doc.reviewer = request.user
+        doc.review_note = note
+        doc.reviewed_at = timezone.now()
+        doc.save(update_fields=["status", "reviewer", "review_note", "reviewed_at"])
+
+        cust = doc.user
+        lim, _ = CustomerLimit.objects.get_or_create(user=cust)
+        if decision == "APPROVED_NASIYA":
+            KycDocument.objects.filter(user=cust, status="CASH_ONLY").update(status="APPROVED_NASIYA", reviewed_at=timezone.now(), reviewer=request.user)
+            cust.kyc_status = "VERIFIED"
+            cust.save(update_fields=["kyc_status"])
+            if approved_limit_raw is not None and str(approved_limit_raw).strip() != "":
+                target_lim = max(lim.used_limit_uzs, int(approved_limit_raw))
+            else:
+                target_lim = max(lim.used_limit_uzs, lim.total_limit_uzs, 5_000_000)
+            lim.total_limit_uzs = target_lim
+            lim.is_frozen = False
+            lim.freeze_reason = ""
+            lim.is_demo_limit = settings.ZARVON_SANDBOX_MODE
+            lim.save()
+            NotificationEvent.objects.create(
+                user=cust,
+                channel="PUSH",
+                category="TRANSACTIONAL",
+                status="delivered",
+                title="✅ Hujjatlaringiz tasdiqlandi — Nasiya savdo ochildi",
+                body_masked=f"Nazoratchi tekshiruvidan muvaffaqiyatli o‘tdingiz. Bo‘sh limit: {lim.available_limit_uzs:,} so‘m.",
+            )
+        elif decision == "CASH_ONLY":
+            cust.kyc_status = "VERIFIED"
+            cust.save(update_fields=["kyc_status"])
+            lim.is_frozen = True
+            lim.freeze_reason = note or "Nazoratchi hujjat tekshiruvida kredit/MIB qarzi aniqlandi — Faqat naqd savdo"
+            lim.save(update_fields=["is_frozen", "freeze_reason", "updated_at"])
+            NotificationEvent.objects.create(
+                user=cust,
+                channel="PUSH",
+                category="TRANSACTIONAL",
+                status="delivered",
+                title="⚠ Faqat naqd savdo rejimi belgilandi",
+                body_masked=lim.freeze_reason,
+            )
+        else:
+            cust.kyc_status = "REJECTED"
+            cust.save(update_fields=["kyc_status"])
+            NotificationEvent.objects.create(
+                user=cust,
+                channel="PUSH",
+                category="TRANSACTIONAL",
+                status="delivered",
+                title="✕ KYC hujjati rad etildi — qayta yuklang",
+                body_masked=note or "Pasport yoki ma’lumotnoma rasmi aniq emas; iltimos qayta yuklang.",
+            )
+
+        policy = evaluate_customer_credit_policy(cust)
+        notify_supervisors_credit_status(
+            user=cust,
+            policy=policy,
+            trigger="SUPERVISOR_INSPECTION",
+            extra_note=f"Hujjat qarori ({doc.get_doc_type_display()} -> {decision}) by {request.user.full_name}.",
+        )
+        AuditLog.record(
+            actor=request.user,
+            action="KYC_DOCUMENT_REVIEWED",
+            object_type="KycDocument",
+            object_id=doc.id,
+            reason=f"{decision}: {note or 'Izohsiz'}",
+        )
+        return Response(
+            {
+                "ok": True,
+                "document": _serialize_kyc_doc(doc),
+                "kyc_status": cust.kyc_status,
+                "credit_policy": policy,
+                "detail": f"Hujjat bo‘yicha qaror saqlandi: {doc.get_status_display()}",
+            }
+        )

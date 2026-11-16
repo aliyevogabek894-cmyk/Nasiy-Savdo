@@ -396,6 +396,7 @@ class ExternalScoringReport(models.Model):
         choices=[("APPROVE", "Tasdiqlandi"), ("MANUAL_REVIEW", "Qo‘shimcha ko‘rik"), ("DECLINE", "Rad etildi")],
     )
     decision_reasons = models.JSONField(default=list)
+    bureau_trace = models.JSONField(default=list)
     is_demo = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -491,4 +492,49 @@ class PaymentReminderLog(models.Model):
 
     class Meta:
         db_table = "payment_reminder_logs"
+        ordering = ["-created_at"]
+
+
+class KycDocument(models.Model):
+    """Private customer KYC documents (Passport photo, Selfie, MIB certificate) stored in PRIVATE_MEDIA_ROOT."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="kyc_documents")
+    doc_type = models.CharField(
+        max_length=32,
+        choices=[
+            ("PASSPORT_FRONT", "Pasport / ID (old tomon)"),
+            ("PASSPORT_BACK", "Pasport / ID (orqa tomon)"),
+            ("SELFIE", "Pasport bilan selfi / Face ID"),
+            ("MIB_CERT", "MIB / My.gov.uz ma’lumotnomasi"),
+            ("INCOME_PROOF", "Rasmiy daromad ma’lumotnomasi"),
+        ],
+    )
+    file_rel_path = models.CharField(max_length=255)
+    content_type = models.CharField(max_length=64, default="image/jpeg")
+    original_filename = models.CharField(max_length=160, blank=True)
+    file_size_bytes = models.PositiveBigIntegerField(default=0)
+    status = models.CharField(
+        max_length=24,
+        default="PENDING",
+        choices=[
+            ("PENDING", "Tekshirilmoqda"),
+            ("APPROVED_NASIYA", "Tasdiqlangan (Nasiya ochiq)"),
+            ("CASH_ONLY", "Kredit/Qarz — Faqat naqd savdo"),
+            ("REJECTED", "Rad etilgan"),
+        ],
+    )
+    reviewer = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="reviewed_kyc_documents",
+    )
+    review_note = models.CharField(max_length=255, blank=True)
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "kyc_documents"
         ordering = ["-created_at"]

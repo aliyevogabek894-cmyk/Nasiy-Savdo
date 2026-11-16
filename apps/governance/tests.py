@@ -1438,3 +1438,191 @@ class UzumPspAndMarketplaceFlowTests(_DjangoTestCase):
             pay_rec = PaymentRecord.objects.get(order=order_obj)
             self.assertEqual(pay_rec.status, "SUCCEEDED")
             self.assertFalse(pay_rec.is_demo)
+
+    def test_kyc_document_private_upload_rbac_and_supervisor_decision(self):
+        import tempfile
+        from PIL import Image
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from django.test import override_settings
+        from apps.accounts.models import UserRole as _Role
+        from apps.finance.models import CustomerLimit, InstallmentPlan, KycDocument
+        from apps.finance.scoring import evaluate_customer_credit_policy
+
+        doc_cust = _TestUser.objects.create_user("+998901777666", "Pass1234!", full_name="Hujjat Mijoz", role=_Role.CUSTOMER)
+        other_cust = _TestUser.objects.create_user("+998901777555", "Pass1234!", full_name="Begona Mijoz", role=_Role.CUSTOMER)
+        auditor = _TestUser.objects.filter(role=_Role.AUDITOR, is_active=True).first()
+        super_admin = _TestUser.objects.filter(role=_Role.SUPER_ADMIN, is_active=True).first()
+        plan12 = InstallmentPlan.objects.filter(is_active=True).first()
+
+        buf = io.BytesIO()
+        Image.new("RGB", (120, 80), color=(40, 90, 160)).save(buf, format="PNG")
+        png_bytes = buf.getvalue()
+
+        with tempfile.TemporaryDirectory() as tmpdir, override_settings(PRIVATE_MEDIA_ROOT=tmpdir):
+            self.client.force_authenticate(user=doc_cust)
+
+            bad_up = self.client.post(
+                "/api/v1/finance/kyc/documents/",
+                {"doc_type": "PASSPORT_FRONT", "file": SimpleUploadedFile("bad.jpg", b"not-an-image", content_type="image/jpeg")},
+                format="multipart",
+            )
+            self.assertEqual(bad_up.status_code, 400)
+
+            up_img = self.client.post(
+                "/api/v1/finance/kyc/documents/",
+                {"doc_type": "PASSPORT_FRONT", "file": SimpleUploadedFile("passport.png", png_bytes, content_type="image/png")},
+                format="multipart",
+            )
+            self.assertEqual(up_img.status_code, 201, up_img.data)
+            img_doc_id = up_img.data["document"]["id"]
+            self.assertEqual(up_img.data["kyc_status"], "PENDING")
+
+            up_pdf = self.client.post(
+                "/api/v1/finance/kyc/documents/",
+                {"doc_type": "MIB_CERT", "file": SimpleUploadedFile("mib.pdf", b"%PDF-1.4\n%ZarvonTest\n", content_type="application/pdf")},
+                format="multipart",
+            )
+            self.assertEqual(up_pdf.status_code, 201, up_pdf.data)
+            pdf_doc_id = up_pdf.data["document"]["id"]
+
+            # Owner can stream private file; another customer is blocked (403)
+            own_file = self.client.get(f"/api/v1/finance/kyc/documents/{img_doc_id}/file/")
+            try:
+                self.assertEqual(own_file.status_code, 200)
+                self.assertIn("no-store", own_file["Cache-Control"])
+            finally:
+                own_file.close()
+
+            self.client.force_authenticate(user=other_cust)
+            other_file = self.client.get(f"/api/v1/finance/kyc/documents/{img_doc_id}/file/")
+            self.assertEqual(other_file.status_code, 403)
+
+            # Auditor can view file (200) but cannot mutate review decisions (403)
+            self.client.force_authenticate(user=auditor)
+            aud_file = self.client.get(f"/api/v1/finance/kyc/documents/{pdf_doc_id}/file/")
+            try:
+                self.assertEqual(aud_file.status_code, 200)
+            finally:
+                aud_file.close()
+            aud_dec = self.client.post(
+                f"/api/v1/finance/kyc/documents/{pdf_doc_id}/decide/",
+                {"decision": "APPROVED_NASIYA"},
+                format="json",
+            )
+            self.assertEqual(aud_dec.status_code, 403)
+
+            # Supervisor forces CASH_ONLY -> freezes limit & blocks Nasiya checkout
+            self.client.force_authenticate(user=super_admin)
+            cash_dec = self.client.post(
+                f"/api/v1/finance/kyc/documents/{pdf_doc_id}/decide/",
+                {"decision": "CASH_ONLY", "review_note": "MIB qarz aniqlandi — faqat naqd savdo"},
+                format="json",
+            )
+            self.assertEqual(cash_dec.status_code, 200, cash_dec.data)
+            self.assertTrue(cash_dec.data["credit_policy"]["cash_only_required"])
+            self.assertEqual(cash_dec.data["credit_policy"]["credit_condition_code"], "MANUAL_CASH_ONLY")
+
+            self.client.force_authenticate(user=doc_cust)
+            blk_chk = self.client.post(
+                "/api/v1/commerce/checkout/",
+                {
+                    "idempotency_key": f"kyc-blk-{doc_cust.id}",
+                    "items": [{"product_id": str(self.product.id), "quantity": 1}],
+                    "delivery_type": "COURIER",
+                    "delivery_address": "Toshkent",
+                    "payment_channel": "ZARVON_NASIYA",
+                    "plan_id": str(plan12.id),
+                },
+                format="json",
+            )
+            self.assertEqual(blk_chk.status_code, 403)
+
+            # Supervisor re-approves -> unfreezes & grants 12,000,000 UZS limit
+            self.client.force_authenticate(user=super_admin)
+            ok_dec = self.client.post(
+                f"/api/v1/finance/kyc/documents/{pdf_doc_id}/decide/",
+                {"decision": "APPROVED_NASIYA", "approved_limit_uzs": 12_000_000},
+                format="json",
+            )
+            self.assertEqual(ok_dec.status_code, 200, ok_dec.data)
+            doc_cust.refresh_from_db()
+            self.assertEqual(doc_cust.kyc_status, "VERIFIED")
+            self.assertFalse(evaluate_customer_credit_policy(doc_cust)["cash_only_required"])
+            self.assertEqual(CustomerLimit.objects.get(user=doc_cust).available_limit_uzs, 12_000_000)
+
+    def test_external_myid_katm_mib_http_adapter_sandbox_and_live(self):
+        from unittest.mock import MagicMock, patch
+        from django.test import override_settings
+        from apps.finance.scoring import run_katm_and_mib_scoring
+
+        # 1. Sandbox adapter captures 3 HTTP simulation traces
+        rep_sim = run_katm_and_mib_scoring(
+            user=self.customer,
+            pinfl="31908950010011",
+            inn="301234567",
+            passport="AA5551122",
+            monthly_income_uzs=10_000_000,
+            scenario="clean",
+        )
+        self.assertEqual(rep_sim.provider_mode, "SANDBOX_ADAPTER")
+        self.assertTrue(rep_sim.is_demo)
+        self.assertEqual(len(rep_sim.bureau_trace), 3)
+        self.assertEqual(rep_sim.bureau_trace[0]["mode"], "SANDBOX_HTTP_SIM")
+
+        # 2. Live HTTP adapter calls MyID, KATM & MIB REST endpoints via requests.post
+        def _fake_post(url, **kwargs):
+            m = MagicMock()
+            m.status_code = 200
+            m.raise_for_status.return_value = None
+            m.content = b"{}"
+            if "myid" in url:
+                m.json.return_value = {"verified": True, "liveness_passed": True}
+            elif "katm" in url:
+                m.json.return_value = {
+                    "katm_score": 690,
+                    "external_credit_history_grade": "B",
+                    "external_overdue_days_max": 0,
+                    "external_obligations": [{"lender": "Hamkorbank Live", "type": "Kredit", "monthly_uzs": 1_200_000, "remaining_uzs": 9_000_000, "status": "ON_TIME"}],
+                }
+            else:
+                m.json.return_value = {"mib_status": "CLEAN", "mib_debt_uzs": 0, "mib_active_cases_count": 0, "mib_details": []}
+            return m
+
+        with override_settings(
+            MYID_API_URL="https://myid.test.local/verify",
+            MYID_CLIENT_ID="zrv-myid",
+            MYID_CLIENT_SECRET="sec",
+            KATM_API_URL="https://katm.test.local/report",
+            KATM_API_TOKEN="katm-tok",
+            MIB_API_URL="https://mib.test.local/debt",
+            MIB_API_TOKEN="mib-tok",
+        ), patch("apps.finance.scoring.requests.post", side_effect=_fake_post) as mock_post:
+            rep_live = run_katm_and_mib_scoring(
+                user=self.customer,
+                pinfl="31908950010011",
+                inn="301234567",
+                passport="AA5551122",
+                monthly_income_uzs=10_000_000,
+            )
+            self.assertEqual(mock_post.call_count, 3)
+            self.assertEqual(rep_live.provider_mode, "LIVE_ADAPTER")
+            self.assertFalse(rep_live.is_demo)
+            self.assertEqual(rep_live.decision, "DECLINE")
+            self.assertEqual(rep_live.external_active_credits_count, 1)
+            self.assertTrue(all(t["mode"] == "LIVE_HTTP" for t in rep_live.bureau_trace))
+            # Raw PINFL must be masked inside stored bureau_trace
+            self.assertNotIn("31908950010011", str(rep_live.bureau_trace))
+
+        # 3. Live bureau network error safely falls back to MANUAL_REVIEW
+        with override_settings(
+            KATM_API_URL="https://katm.test.local/report",
+            MIB_API_URL="https://mib.test.local/debt",
+        ), patch("apps.finance.scoring.requests.post", side_effect=ConnectionError("timeout")):
+            rep_err = run_katm_and_mib_scoring(
+                user=self.customer,
+                pinfl="31908950010011",
+                monthly_income_uzs=10_000_000,
+            )
+            self.assertEqual(rep_err.decision, "MANUAL_REVIEW")
+            self.assertEqual(rep_err.recommended_limit_uzs, 0)
+            self.assertTrue(any("LIVE_HTTP_ERROR" == t["mode"] for t in rep_err.bureau_trace))

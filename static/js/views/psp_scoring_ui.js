@@ -178,6 +178,14 @@ export function renderKatmMibDstiReportHtml(rep, creditPolicy = null) {
           </ul>
         </div>
       </div>
+
+      ${Array.isArray(rep.bureau_trace) && rep.bureau_trace.length
+      ? `<details class="mt-3" style="background:var(--bg-subtle);border:1px solid var(--border-color);border-radius:10px;padding:8px 12px;">
+           <summary class="text-xs fw-bold" style="cursor:pointer;">🌐 Tashqi API HTTP Trace (MyID / KATM / MIB — ${rep.bureau_trace.length} so‘rov)</summary>
+           <pre class="text-xs mt-2" style="margin-bottom:0;overflow:auto;max-height:200px;">${esc(JSON.stringify(rep.bureau_trace, null, 2))}</pre>
+         </details>`
+      : ""
+    }
     </div>
   `;
 }

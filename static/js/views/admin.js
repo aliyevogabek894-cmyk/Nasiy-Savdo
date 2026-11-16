@@ -998,6 +998,7 @@ export async function renderAdminPortalView(container, refreshAuthCallback) {
         const isAuditor = AppState.user?.role === "AUDITOR";
         const customersList = sc.customers_credit_overview || [];
         const alertsList = sc.supervisor_alerts || [];
+        const kycDocs = sc.kyc_documents || [];
 
         const conditionBadge = (pol) => {
           if (!pol) return statusBadge("PENDING");
@@ -1088,6 +1089,43 @@ export async function renderAdminPortalView(container, refreshAuthCallback) {
             </div>
           </div>
 
+          <div class="card mb-4">
+            <div class="flex-between mb-2">
+              <h3 style="margin:0;">📄 Mijoz hujjatlari (Pasport / Selfi / MIB) va Qo‘lda KYC Tekshiruvi (${kycDocs.length})</h3>
+              <span class="badge badge-navy">PRIVATE_MEDIA_ROOT</span>
+            </div>
+            <div class="table-wrap">
+              <table class="data-table text-xs tabular">
+                <thead><tr><th>Mijoz</th><th>Hujjat turi</th><th>Fayl</th><th>Holat / Izoh</th><th>Nazoratchi qarori</th></tr></thead>
+                <tbody>
+                  ${
+                    kycDocs.length
+                      ? kycDocs
+                          .map(
+                            (d) => `<tr>
+                              <td><strong>${esc(d.customer_name)}</strong><br><span class="text-muted">${esc(d.customer_phone_masked)}</span><br>${statusBadge(d.customer_kyc_status)}</td>
+                              <td><strong>${esc(d.doc_type_label)}</strong><br><span class="text-muted">${fmtDate(d.created_at)}</span></td>
+                              <td><a href="${esc(d.file_url)}" target="_blank" rel="noopener" class="btn btn-outline btn-xs">👁 ${d.is_image ? "Rasmni ochish" : "PDF ochish"}</a></td>
+                              <td>${statusBadge(d.status)}<div class="mt-1">${esc(d.status_label)}</div>${d.review_note ? `<div class="text-muted mt-1">${esc(d.review_note)}</div>` : ""}</td>
+                              <td>${
+                                isAuditor
+                                  ? `<span class="text-muted">Faqat o‘qish</span>`
+                                  : `<div class="flex-gap" style="flex-wrap:wrap;">
+                                       <button type="button" class="btn btn-success btn-xs" data-kyc-dec="${esc(d.id)}" data-dec="APPROVED_NASIYA">✅ Nasiya ochiq</button>
+                                       <button type="button" class="btn btn-warning btn-xs" data-kyc-dec="${esc(d.id)}" data-dec="CASH_ONLY">⚠ Faqat naqd</button>
+                                       <button type="button" class="btn btn-danger btn-xs" data-kyc-dec="${esc(d.id)}" data-dec="REJECTED">✕ Rad etish</button>
+                                     </div>`
+                              }</td>
+                            </tr>`
+                          )
+                          .join("")
+                      : `<tr><td colspan="5" class="text-muted">Hozircha yuklangan pasport yoki MIB hujjatlari yo‘q.</td></tr>`
+                  }
+                </tbody>
+              </table>
+            </div>
+          </div>
+
           <h3 class="mb-2">👥 Mijozlarning jonli kredit ahvoli va savdo rejimi</h3>
           <div class="table-wrap mb-4">
             <table class="data-table text-sm tabular">
@@ -1129,7 +1167,7 @@ export async function renderAdminPortalView(container, refreshAuthCallback) {
                     <td><strong>${r.dsti_after_pct}%</strong> (avval ${r.dsti_before_pct}%)<br><span class="text-xs text-muted">Daromad: ${fmtUzs(r.monthly_income_uzs)}</span></td>
                     <td class="fw-bold">${fmtUzs(r.recommended_limit_uzs)}</td>
                     <td>${conditionBadge(r.credit_policy)}<br><span class="badge mt-1 ${r.credit_policy?.cash_only_required ? "badge-danger" : "badge-success"}">${esc(r.credit_policy?.trading_mode_label || "")}</span></td>
-                    <td>${statusBadge(r.decision)}<br><span class="text-xs text-muted">${esc((r.decision_reasons || [])[0] || "")}</span></td>
+                    <td>${statusBadge(r.decision)}<br><span class="text-xs text-muted">${esc((r.decision_reasons || [])[0] || "")}</span>${Array.isArray(r.bureau_trace) && r.bureau_trace.length ? `<details class="mt-1"><summary class="text-xs" style="cursor:pointer;">🌐 HTTP Trace (${r.bureau_trace.length})</summary><pre class="text-xs" style="max-width:260px;max-height:120px;overflow:auto;">${esc(JSON.stringify(r.bureau_trace, null, 2))}</pre></details>` : ""}</td>
                   </tr>`
             )
             .join("") || "<tr><td colspan='9'>Skoring hisobotlari hali yo‘q</td></tr>"}
@@ -1139,6 +1177,28 @@ export async function renderAdminPortalView(container, refreshAuthCallback) {
         `;
 
         const supForm = document.getElementById("sup-inspect-form");
+        panel.querySelectorAll("[data-kyc-dec]").forEach((btn) => {
+          btn.onclick = async () => {
+            const docId = btn.dataset.kycDec;
+            const dec = btn.dataset.dec;
+            const defaultNote =
+              dec === "APPROVED_NASIYA"
+                ? "Pasport va MIB hujjati nazoratchi tomonidan tasdiqlandi"
+                : dec === "CASH_ONLY"
+                ? "Hujjat tekshiruvida faol kredit/MIB qarzi aniqlandi — faqat naqd savdo"
+                : "Rasm sifati past yoki hujjat mos emas — qayta yuklang";
+            try {
+              const res = await apiFetch(`/api/v1/finance/kyc/documents/${docId}/decide/`, {
+                method: "POST",
+                body: JSON.stringify({ decision: dec, review_note: defaultNote }),
+              });
+              showToast(res.detail, dec === "APPROVED_NASIYA" ? "success" : "warning");
+              load();
+            } catch (err) {
+              showToast(err.message, "error");
+            }
+          };
+        });
         if (supForm) {
           supForm.addEventListener("submit", async (e) => {
             e.preventDefault();

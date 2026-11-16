@@ -1139,6 +1139,49 @@ export async function renderCustomerCabinetView(container, initialTab = "nasiya"
             </div>
           </div>
         </div>
+        <div class="card mt-4" style="background:var(--bg-subtle);">
+          <h3 class="mb-2">📎 Pasport, Selfi va MIB hujjatlarini yuklash (Shaxsiy xavfsiz ombor)</h3>
+          <p class="text-xs text-muted mb-3">Yuklangan pasport rasmlari, selfi va My.gov.uz / MIB ma’lumotnomalari yopiq omborda saqlanadi — ularni faqat siz va vakolatli Nazoratchi ko‘ra oladi.</p>
+          <form id="kyc-doc-upload-form" class="grid-3 mb-3" style="align-items:end;">
+            <div class="form-group" style="margin:0;">
+              <label class="form-label" for="kd-type">Hujjat turi</label>
+              <select id="kd-type" class="form-control">
+                <option value="PASSPORT_FRONT">Pasport / ID (old tomon)</option>
+                <option value="PASSPORT_BACK">Pasport / ID (orqa tomon)</option>
+                <option value="SELFIE">Kamera / Pasport bilan selfi</option>
+                <option value="MIB_CERT">MIB / My.gov.uz ma’lumotnoma (JPG/PDF)</option>
+                <option value="INCOME_PROOF">Ish haqi / daromad ma’lumotnoma</option>
+              </select>
+            </div>
+            <div class="form-group" style="margin:0;">
+              <label class="form-label" for="kd-file">Fayl (JPG, PNG, WEBP yoki PDF, max 8MB)</label>
+              <input id="kd-file" type="file" accept="image/*,.pdf" capture="user" class="form-control">
+            </div>
+            <button type="submit" id="kd-upload-btn" class="btn btn-primary">📤 Xavfsiz yuklash</button>
+          </form>
+          ${
+            (cab.kyc_documents || []).length
+              ? `<div class="table-wrap">
+                   <table class="data-table text-xs tabular">
+                     <thead><tr><th>Hujjat</th><th>Sana</th><th>Holat</th><th>Nazoratchi izohi</th><th>Ko‘rish</th></tr></thead>
+                     <tbody>
+                       ${(cab.kyc_documents || [])
+                         .map(
+                           (d) => `<tr>
+                             <td class="fw-bold">${esc(d.doc_type_label)}</td>
+                             <td>${fmtDate(d.created_at)}</td>
+                             <td>${statusBadge(d.status)} <div class="text-xs text-muted">${esc(d.status_label)}</div></td>
+                             <td>${esc(d.review_note || "—")}</td>
+                             <td><a href="${esc(d.file_url)}" target="_blank" rel="noopener" class="btn btn-outline btn-xs">👁 Ochish</a></td>
+                           </tr>`
+                         )
+                         .join("")}
+                     </tbody>
+                   </table>
+                 </div>`
+              : `<div class="text-xs text-muted">Hali pasport rasmi, selfi yoki MIB hujjati yuklanmagan.</div>`
+          }
+        </div>
         <div id="kyc-report-mount">${renderKatmMibDstiReportHtml(cab.latest_scoring_report, cab.credit_policy)}</div>
       `;
       document.getElementById("kyc-form").addEventListener("submit", async (e) => {
@@ -1172,6 +1215,29 @@ export async function renderCustomerCabinetView(container, initialTab = "nasiya"
           load();
         } catch (err) {
           showToast(err.message, "error");
+        }
+      });
+      document.getElementById("kyc-doc-upload-form")?.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const fileEl = document.getElementById("kd-file");
+        const file = fileEl?.files?.[0];
+        if (!file) {
+          showToast("Avval rasm yoki PDF fayl tanlang.", "error");
+          return;
+        }
+        const btn = document.getElementById("kd-upload-btn");
+        btn.disabled = true;
+        try {
+          const fd = new FormData();
+          fd.append("doc_type", document.getElementById("kd-type").value);
+          fd.append("file", file);
+          const up = await apiFetch("/api/v1/finance/kyc/documents/", { method: "POST", body: fd });
+          showToast(up.detail || "Hujjat yuklandi!", "success");
+          load();
+        } catch (err) {
+          showToast(err.message, "error");
+        } finally {
+          btn.disabled = false;
         }
       });
     } else if (activeTab === "privacy") {

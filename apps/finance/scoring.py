@@ -1,12 +1,24 @@
 """KATM Credit Bureau, MIB Enforcement Debt & 50% DSTI Debt-Burden Scoring Engine."""
+import logging
+import time
 import uuid
+import requests
 from django.conf import settings
 from django.utils import timezone
 
 from apps.accounts.models import User, UserRole
-from apps.finance.models import ContractStatus, ExternalScoringReport, InstallmentContract, InstallmentScheduleItem
+from apps.finance.models import (
+    ContractStatus,
+    CustomerLimit,
+    ExternalScoringReport,
+    InstallmentContract,
+    InstallmentScheduleItem,
+    KycDocument,
+)
 from apps.governance.models import BhmValue, ComplianceRuleVersion, NotificationEvent, SecurityEvent
 from config.utils import compute_monthly_installment, mask_value
+
+logger = logging.getLogger(__name__)
 
 SUPERVISOR_ROLES = [
     UserRole.SUPER_ADMIN,
@@ -123,6 +135,270 @@ def _build_bureau_payload(
     }
 
 
+def verify_myid_liveness(*, pinfl: str, passport: str, birth_year: int, liveness_passed: bool = True) -> dict:
+    """Verify passport/PINFL via MyID Biometric REST API when configured, or return simulated MyID HTTP trace."""
+    api_url = (getattr(settings, "MYID_API_URL", "") or "").strip()
+    pinfl_m = mask_value(pinfl, 4, 2)
+    pass_m = mask_value(passport, 2, 2)
+    if api_url:
+        t0 = time.monotonic()
+        headers = {}
+        secret = getattr(settings, "MYID_CLIENT_SECRET", "") or ""
+        if secret:
+            headers["Authorization"] = f"Bearer {secret}"
+        try:
+            resp = requests.post(
+                api_url,
+                headers=headers,
+                json={
+                    "client_id": getattr(settings, "MYID_CLIENT_ID", ""),
+                    "pinfl": pinfl,
+                    "passport": passport,
+                    "birth_year": int(birth_year or 1994),
+                    "liveness_check": bool(liveness_passed),
+                },
+                timeout=8,
+            )
+            ms = round((time.monotonic() - t0) * 1000)
+            resp.raise_for_status()
+            data = resp.json() if resp.content else {}
+            ok = bool(data.get("verified", liveness_passed))
+            return {
+                "verified": ok,
+                "mode": "LIVE_HTTP",
+                "trace": {
+                    "service": "MyID Biometric",
+                    "mode": "LIVE_HTTP",
+                    "endpoint": api_url,
+                    "http_status": resp.status_code,
+                    "latency_ms": ms,
+                    "request_masked": {"pinfl": pinfl_m, "passport": pass_m, "birth_year": int(birth_year or 1994)},
+                    "response_summary": {"verified": ok, "liveness": bool(data.get("liveness_passed", ok))},
+                },
+            }
+        except Exception as exc:
+            ms = round((time.monotonic() - t0) * 1000)
+            logger.warning("MyID LIVE_HTTP xatosi: %s", exc)
+            return {
+                "verified": False,
+                "mode": "LIVE_HTTP_ERROR",
+                "trace": {
+                    "service": "MyID Biometric",
+                    "mode": "LIVE_HTTP_ERROR",
+                    "endpoint": api_url,
+                    "http_status": 502,
+                    "latency_ms": ms,
+                    "request_masked": {"pinfl": pinfl_m, "passport": pass_m},
+                    "error": str(exc)[:180],
+                },
+            }
+
+    return {
+        "verified": bool(liveness_passed),
+        "mode": "SANDBOX_HTTP_SIM",
+        "trace": {
+            "service": "MyID Biometric",
+            "mode": "SANDBOX_HTTP_SIM",
+            "endpoint": "https://api.myid.uz/api/v1/authentication/verify (Simulated)",
+            "http_status": 200,
+            "latency_ms": 18,
+            "request_masked": {"pinfl": pinfl_m, "passport": pass_m, "birth_year": int(birth_year or 1994)},
+            "response_summary": {"verified": bool(liveness_passed), "face_match_pct": 98.6},
+        },
+    }
+
+
+def query_katm_and_mib_bureau(
+    *,
+    scenario: str,
+    pinfl: str,
+    inn: str = "",
+    passport: str = "",
+    birth_year: int = 1994,
+    monthly_income_uzs: int = 8_000_000,
+    liveness_passed: bool = True,
+) -> dict:
+    """
+    Query MyID + KATM + MIB REST services via live HTTPS POST when configured in env,
+    or execute deterministic Sandbox HTTP-protocol simulation when URLs are unset.
+    """
+    sim_payload = _build_bureau_payload(scenario=scenario, pinfl=pinfl, monthly_income_uzs=monthly_income_uzs)
+    myid_res = verify_myid_liveness(
+        pinfl=pinfl,
+        passport=passport,
+        birth_year=birth_year,
+        liveness_passed=liveness_passed,
+    )
+    traces = [myid_res["trace"]]
+
+    pinfl_m = mask_value(pinfl, 4, 2)
+    inn_m = mask_value(inn, 3, 2) if inn else ""
+    katm_url = (getattr(settings, "KATM_API_URL", "") or "").strip()
+    mib_url = (getattr(settings, "MIB_API_URL", "") or "").strip()
+    live_used = False
+    bureau_error = False
+
+    # KATM Query
+    katm_data = None
+    if katm_url:
+        live_used = True
+        t0 = time.monotonic()
+        headers = {}
+        k_tok = getattr(settings, "KATM_API_TOKEN", "") or ""
+        if k_tok:
+            headers["Authorization"] = f"Bearer {k_tok}"
+        try:
+            resp = requests.post(
+                katm_url,
+                headers=headers,
+                json={"pinfl": pinfl, "inn": inn, "passport": passport},
+                timeout=8,
+            )
+            ms = round((time.monotonic() - t0) * 1000)
+            resp.raise_for_status()
+            katm_data = resp.json() if resp.content else {}
+            traces.append(
+                {
+                    "service": "KATM (infokredit.uz)",
+                    "mode": "LIVE_HTTP",
+                    "endpoint": katm_url,
+                    "http_status": resp.status_code,
+                    "latency_ms": ms,
+                    "request_masked": {"pinfl": pinfl_m, "inn": inn_m},
+                    "response_summary": {
+                        "katm_score": katm_data.get("katm_score"),
+                        "obligations_count": len(katm_data.get("external_obligations") or []),
+                        "overdue_days_max": katm_data.get("external_overdue_days_max", 0),
+                    },
+                }
+            )
+        except Exception as exc:
+            ms = round((time.monotonic() - t0) * 1000)
+            bureau_error = True
+            logger.warning("KATM LIVE_HTTP xatosi: %s", exc)
+            traces.append(
+                {
+                    "service": "KATM (infokredit.uz)",
+                    "mode": "LIVE_HTTP_ERROR",
+                    "endpoint": katm_url,
+                    "http_status": 502,
+                    "latency_ms": ms,
+                    "request_masked": {"pinfl": pinfl_m, "inn": inn_m},
+                    "error": str(exc)[:180],
+                }
+            )
+    else:
+        katm_data = {
+            "katm_score": sim_payload["katm_score"],
+            "external_credit_history_grade": sim_payload["external_credit_history_grade"],
+            "external_overdue_days_max": sim_payload["external_overdue_days_max"],
+            "external_obligations": sim_payload["external_obligations"],
+        }
+        traces.append(
+            {
+                "service": "KATM (infokredit.uz)",
+                "mode": "SANDBOX_HTTP_SIM",
+                "endpoint": "https://api.infokredit.uz/v1/credit-history (Simulated)",
+                "http_status": 200,
+                "latency_ms": 24,
+                "request_masked": {"pinfl": pinfl_m, "inn": inn_m},
+                "response_summary": {
+                    "katm_score": katm_data["katm_score"],
+                    "obligations_count": len(katm_data["external_obligations"]),
+                    "overdue_days_max": katm_data["external_overdue_days_max"],
+                },
+            }
+        )
+
+    # MIB Query
+    mib_data = None
+    if mib_url:
+        live_used = True
+        t0 = time.monotonic()
+        headers = {}
+        m_tok = getattr(settings, "MIB_API_TOKEN", "") or ""
+        if m_tok:
+            headers["Authorization"] = f"Bearer {m_tok}"
+        try:
+            resp = requests.post(
+                mib_url,
+                headers=headers,
+                json={"pinfl": pinfl},
+                timeout=8,
+            )
+            ms = round((time.monotonic() - t0) * 1000)
+            resp.raise_for_status()
+            mib_data = resp.json() if resp.content else {}
+            traces.append(
+                {
+                    "service": "MIB (mib.uz / api.my.gov.uz)",
+                    "mode": "LIVE_HTTP",
+                    "endpoint": mib_url,
+                    "http_status": resp.status_code,
+                    "latency_ms": ms,
+                    "request_masked": {"pinfl": pinfl_m},
+                    "response_summary": {
+                        "mib_status": mib_data.get("mib_status", "CLEAN"),
+                        "mib_debt_uzs": mib_data.get("mib_debt_uzs", 0),
+                    },
+                }
+            )
+        except Exception as exc:
+            ms = round((time.monotonic() - t0) * 1000)
+            bureau_error = True
+            logger.warning("MIB LIVE_HTTP xatosi: %s", exc)
+            traces.append(
+                {
+                    "service": "MIB (mib.uz / api.my.gov.uz)",
+                    "mode": "LIVE_HTTP_ERROR",
+                    "endpoint": mib_url,
+                    "http_status": 502,
+                    "latency_ms": ms,
+                    "request_masked": {"pinfl": pinfl_m},
+                    "error": str(exc)[:180],
+                }
+            )
+    else:
+        mib_data = {
+            "mib_status": sim_payload["mib_status"],
+            "mib_debt_uzs": sim_payload["mib_debt_uzs"],
+            "mib_active_cases_count": sim_payload["mib_active_cases_count"],
+            "mib_details": sim_payload["mib_details"],
+        }
+        traces.append(
+            {
+                "service": "MIB (mib.uz / api.my.gov.uz)",
+                "mode": "SANDBOX_HTTP_SIM",
+                "endpoint": "https://api.my.gov.uz/mib/v1/enforcement-debt (Simulated)",
+                "http_status": 200,
+                "latency_ms": 21,
+                "request_masked": {"pinfl": pinfl_m},
+                "response_summary": {
+                    "mib_status": mib_data["mib_status"],
+                    "mib_debt_uzs": mib_data["mib_debt_uzs"],
+                },
+            }
+        )
+
+    katm_safe = katm_data or {}
+    mib_safe = mib_data or {}
+    return {
+        "scenario_tag": "live_http" if live_used else sim_payload["scenario_tag"],
+        "live_used": live_used,
+        "bureau_error": bureau_error,
+        "myid_verified": myid_res["verified"],
+        "mib_status": mib_safe.get("mib_status", "CLEAN"),
+        "mib_debt_uzs": int(mib_safe.get("mib_debt_uzs") or 0),
+        "mib_active_cases_count": int(mib_safe.get("mib_active_cases_count") or 0),
+        "mib_details": mib_safe.get("mib_details") or [],
+        "katm_score": int(katm_safe.get("katm_score") or 650),
+        "external_credit_history_grade": str(katm_safe.get("external_credit_history_grade") or "B"),
+        "external_overdue_days_max": int(katm_safe.get("external_overdue_days_max") or 0),
+        "external_obligations": katm_safe.get("external_obligations") or [],
+        "bureau_trace": traces,
+    }
+
+
 def _inspect_zarvon_credit_state(user) -> dict:
     """Inspect active ZARVON installment contracts and unpaid/overdue schedule rows."""
     today = timezone.localdate()
@@ -199,6 +475,10 @@ def evaluate_customer_credit_policy(user) -> dict:
     """
     z = _inspect_zarvon_credit_state(user)
     ext = ExternalScoringReport.objects.filter(user=user).first()
+    lim = CustomerLimit.objects.filter(user=user).first()
+    manual_cash_only = KycDocument.objects.filter(user=user, status="CASH_ONLY").exists() or bool(
+        lim and lim.is_frozen and ("naqd" in (lim.freeze_reason or "").lower() or "kredit" in (lim.freeze_reason or "").lower())
+    )
 
     ext_active_count = int(ext.external_active_credits_count or 0) if ext else 0
     ext_total_debt = int(ext.external_total_debt_uzs or 0) if ext else 0
@@ -215,7 +495,7 @@ def evaluate_customer_credit_policy(user) -> dict:
     has_overdue = z["overdue_count"] > 0 or ext_overdue_days > 0
     has_mib_debt = mib_status == "BLOCKED" or mib_debt > 0
     has_active_credit = total_active_credits > 0
-    cash_only_required = has_overdue or has_mib_debt or has_active_credit or (ext is not None and ext.decision == "DECLINE")
+    cash_only_required = has_overdue or has_mib_debt or has_active_credit or manual_cash_only or (ext is not None and ext.decision == "DECLINE")
 
     max_od_days = max(z["overdue_max_days"], ext_overdue_days)
     block_reason = ""
@@ -243,6 +523,12 @@ def evaluate_customer_credit_policy(user) -> dict:
         )
         trading_mode = "Faqat naqd savdo (Nasiya cheklangan)"
         block_reason = f"Sizda {total_active_credits} ta faol kredit (oylik {total_monthly:,} so‘m) mavjudligi sababli qo‘shimcha nasiya berilmaydi — faqat naqd savdo qila olasiz."
+    elif manual_cash_only:
+        code = "MANUAL_CASH_ONLY"
+        label = "⚠ Nazoratchi tekshiruvi: Faqat naqd savdo"
+        detail = (lim.freeze_reason if lim and lim.freeze_reason else "") or "Nazoratchi hujjat/kredit tekshiruvi natijasiga ko‘ra nasiya cheklangan."
+        trading_mode = "Faqat naqd savdo (Nasiya cheklangan)"
+        block_reason = "Nazoratchi tekshiruvi natijasida sizga faqat naqd yoki karta orqali xarid qilish rejimi belgilangan."
     elif ext is not None and ext.decision == "DECLINE":
         code = "DSTI_DECLINED_CASH_ONLY"
         label = f"⚠ Qarz yuki yuqori (DSTI {ext.dsti_before_pct}%)"
@@ -369,21 +655,31 @@ def run_katm_and_mib_scoring(
     user,
     pinfl: str,
     inn: str = "",
+    passport: str = "",
     birth_year: int = 1994,
     monthly_income_uzs: int = 8_000_000,
     requested_purchase_uzs: int = 0,
     requested_months: int = 12,
     scenario: str = "auto",
+    liveness_passed: bool = True,
 ) -> ExternalScoringReport:
     """
     Compute full creditworthiness report combining:
-    - PINFL & INN/STIR identity check
+    - MyID biometric / PINFL & INN/STIR identity check
     - MIB enforcement debt check
     - KATM other banks/lenders active credits & payment discipline
     - Central Bank 50% DSTI (Debt-Service-to-Income) limit calculation
     """
     income = max(1_000_000, int(monthly_income_uzs or 8_000_000))
-    bureau = _build_bureau_payload(scenario=scenario, pinfl=pinfl, monthly_income_uzs=income)
+    bureau = query_katm_and_mib_bureau(
+        scenario=scenario,
+        pinfl=pinfl,
+        inn=inn,
+        passport=passport,
+        birth_year=birth_year,
+        monthly_income_uzs=income,
+        liveness_passed=liveness_passed,
+    )
 
     # Inspect customer's live active & overdue installment contracts inside ZARVON
     z_state = _inspect_zarvon_credit_state(user)
@@ -468,7 +764,12 @@ def run_katm_and_mib_scoring(
     if decision == "APPROVE" and recommended_limit < 2_000_000:
         recommended_limit = 2_000_000 if max_safe_monthly >= 250_000 else 0
 
-    provider_mode = "LIVE_ADAPTER" if (settings.KATM_API_URL and settings.MIB_API_URL) else "SANDBOX_ADAPTER"
+    if bureau.get("bureau_error"):
+        decision = "MANUAL_REVIEW"
+        recommended_limit = 0
+        reasons.append("BUREAU_HTTP_ERROR: Tashqi byuro (KATM/MIB) javob bermadi — Nazoratchi qo‘lda tekshiradi.")
+
+    provider_mode = "LIVE_ADAPTER" if (bureau.get("live_used") or (settings.KATM_API_URL and settings.MIB_API_URL)) else "SANDBOX_ADAPTER"
     return ExternalScoringReport.objects.create(
         user=user,
         check_reference=f"KATM-{uuid.uuid4().hex[:10].upper()}",
@@ -496,5 +797,6 @@ def run_katm_and_mib_scoring(
         recommended_limit_uzs=recommended_limit,
         decision=decision,
         decision_reasons=reasons,
+        bureau_trace=bureau.get("bureau_trace") or [],
         is_demo=(provider_mode == "SANDBOX_ADAPTER"),
     )
