@@ -25,13 +25,19 @@ export async function renderAdminPortalView(container, refreshAuthCallback) {
         <h2 class="mt-2">Vakolatli xodim sifatida tizimga kiring</h2>
         <p class="text-muted">Mijoz yoki sotuvchi akkauntlari admin API so‘rovlariga kira olmaydi (backend 403 cheklovi).</p>
         <div class="flex-gap mt-3" style="justify-content:center;">
-          <button class="btn btn-primary" data-adm-sw="SUPER_ADMIN">🛡 Super Admin sifatida kirish</button>
-          <button class="btn btn-outline" data-adm-sw="MARKETPLACE_ADMIN">📦 Marketplace Admin</button>
-          <button class="btn btn-outline" data-adm-sw="RISK_MANAGER">⚖ Risk Manager</button>
-          <button class="btn btn-outline" data-adm-sw="AUDITOR">👁 Auditor (Faqat o‘qish)</button>
+          ${AppState.sandboxMode
+        ? `<button class="btn btn-primary" data-adm-sw="SUPER_ADMIN">🛡 Super Admin sifatida kirish</button>
+                 <button class="btn btn-outline" data-adm-sw="MARKETPLACE_ADMIN">📦 Marketplace Admin</button>
+                 <button class="btn btn-outline" data-adm-sw="RISK_MANAGER">⚖ Risk Manager</button>
+                 <button class="btn btn-outline" data-adm-sw="AUDITOR">👁 Auditor (Faqat o‘qish)</button>`
+        : `<button class="btn btn-primary" id="adm-login-btn">👤 Xodim sifatida kirish</button>`
+      }
         </div>
       </div>
     `;
+    document.getElementById("adm-login-btn")?.addEventListener("click", () => {
+      document.getElementById("btn-role-switcher")?.click();
+    });
     container.querySelectorAll("[data-adm-sw]").forEach((btn) => {
       btn.onclick = async () => {
         await apiFetch("/api/v1/auth/demo-switch/", { method: "POST", body: JSON.stringify({ role: btn.dataset.admSw }) });
@@ -111,40 +117,40 @@ export async function renderAdminPortalView(container, refreshAuthCallback) {
             <div class="card" style="background:var(--bg-subtle);">
               <h3>Konversiya Voronkasi (33-bo‘lim)</h3>
               ${d.funnel
-                .map(
-                  (f) => `
+            .map(
+              (f) => `
                 <div class="mb-2">
                   <div class="flex-between text-sm"><span>${esc(f.stage)}</span><strong class="tabular">${f.count} (${f.pct}%)</strong></div>
                   <div class="progress-track mt-1"><div class="progress-fill" style="width:${f.pct}%;"></div></div>
                 </div>`
-                )
-                .join("")}
+            )
+            .join("")}
             </div>
             <div class="card" style="background:var(--bg-subtle);">
               <h3>Platforma Konversiya va Kredit Voronkasi (Funnel)</h3>
               <div class="chart-box mb-3">
                 ${(() => {
-                  const steps = [
-                    { label: "Buyurtmalar", val: Number(d.kpis?.total_orders || d.funnel?.orders || 0), color: "#0D213F" },
-                    { label: "Bank Arizalari", val: Number(d.funnel?.credit_apps || d.kpis?.pending_apps || 0), color: "#1E4B85" },
-                    { label: "Faol Shartnomalar", val: Number(d.kpis?.active_contracts || d.funnel?.active_contracts || 0), color: "#C9A227" },
-                    { label: "To‘liq Yopilgan", val: Number(d.funnel?.completed || 0), color: "#0D6839" },
-                  ];
-                  const maxV = Math.max(1, ...steps.map((s) => s.val));
-                  return `
+            const steps = [
+              { label: "Buyurtmalar", val: Number(d.kpis?.total_orders || d.funnel?.orders || 0), color: "#0D213F" },
+              { label: "Bank Arizalari", val: Number(d.funnel?.credit_apps || d.kpis?.pending_apps || 0), color: "#1E4B85" },
+              { label: "Faol Shartnomalar", val: Number(d.kpis?.active_contracts || d.funnel?.active_contracts || 0), color: "#C9A227" },
+              { label: "To‘liq Yopilgan", val: Number(d.funnel?.completed || 0), color: "#0D6839" },
+            ];
+            const maxV = Math.max(1, ...steps.map((s) => s.val));
+            return `
                     <svg viewBox="0 0 460 120" class="chart-svg" role="img" aria-label="Voronka grafigi">
                       ${steps
-                        .map((s, i) => {
-                          const y = 10 + i * 27;
-                          const bw = Math.max(16, Math.round((s.val / maxV) * 260));
-                          return `
+                .map((s, i) => {
+                  const y = 10 + i * 27;
+                  const bw = Math.max(16, Math.round((s.val / maxV) * 260));
+                  return `
                             <text x="4" y="${y + 13}" font-size="11" fill="currentColor" font-weight="600">${s.label}</text>
                             <rect x="135" y="${y}" width="${bw}" height="18" rx="4" fill="${s.color}"></rect>
                             <text x="${143 + bw}" y="${y + 13}" font-size="11" fill="currentColor" font-weight="700">${s.val}</text>`;
-                        })
-                        .join("")}
+                })
+                .join("")}
                     </svg>`;
-                })()}
+          })()}
               </div>
               <h3>Customer 360 (Niqoblangan PII — 33-bo‘lim)</h3>
               <div class="table-wrap">
@@ -152,8 +158,8 @@ export async function renderAdminPortalView(container, refreshAuthCallback) {
                   <thead><tr><th>Mijoz</th><th>KYC</th><th>PINFL</th><th>Buyurtma / Nasiya</th></tr></thead>
                   <tbody>
                     ${d.customer_360_preview
-                      .map((c) => `<tr><td><strong>${esc(c.full_name)}</strong><br><span class="text-xs text-muted">${esc(c.phone)}</span></td><td>${statusBadge(c.kyc_status)}</td><td>${esc(c.masked_pinfl || "—")}</td><td>${c.orders_count} / ${c.contracts_count}</td></tr>`)
-                      .join("")}
+            .map((c) => `<tr><td><strong>${esc(c.full_name)}</strong><br><span class="text-xs text-muted">${esc(c.phone)}</span></td><td>${statusBadge(c.kyc_status)}</td><td>${esc(c.masked_pinfl || "—")}</td><td>${c.orders_count} / ${c.contracts_count}</td></tr>`)
+            .join("")}
                   </tbody>
                 </table>
               </div>
@@ -181,8 +187,8 @@ export async function renderAdminPortalView(container, refreshAuthCallback) {
               <thead><tr><th>Kompaniya</th><th>Vakil / Tel</th><th>Bank (niqob)</th><th>Holat</th><th>Qaror</th></tr></thead>
               <tbody>
                 ${appData.applications
-                  .map(
-                    (a) => `
+            .map(
+              (a) => `
                   <tr>
                     <td><strong>${esc(a.public_name)}</strong><br><span class="text-xs text-muted">${esc(a.legal_name)} (${esc(a.entity_type)})</span></td>
                     <td>${esc(a.representative_name)}<br><span class="text-xs">${esc(a.official_phone)}</span></td>
@@ -196,8 +202,8 @@ export async function renderAdminPortalView(container, refreshAuthCallback) {
                       </div>
                     </td>
                   </tr>`
-                  )
-                  .join("")}
+            )
+            .join("")}
               </tbody>
             </table>
           </div>
@@ -252,20 +258,18 @@ export async function renderAdminPortalView(container, refreshAuthCallback) {
         const mod = await apiFetch("/api/v1/sellers/moderation-queue/");
         panel.innerHTML = `
           <h2 class="mb-3">Mahsulot Moderatsiyasi Navbati (${mod.queue.length})</h2>
-          ${
-            mod.queue.length
-              ? mod.queue
-                  .map(
-                    (p) => `
+          ${mod.queue.length
+            ? mod.queue
+              .map(
+                (p) => `
                 <div class="card mb-3" style="background:var(--bg-subtle);">
                   <div class="flex-between">
                     <div>
                       <strong>${esc(p.title)}</strong> (${esc(p.sku)}) • Do‘kon: ${esc(p.store_name)} • <strong class="tabular">${fmtUzs(p.cash_price)}</strong>
-                      ${
-                        p.latest_version
-                          ? `<div class="text-xs text-secondary mt-1">Tahrir farqi: Eski (${fmtUzs(p.latest_version.previous.cash_price)}) → Yangi (${fmtUzs(p.latest_version.proposed.cash_price)})</div>`
-                          : ""
-                      }
+                      ${p.latest_version
+                    ? `<div class="text-xs text-secondary mt-1">Tahrir farqi: Eski (${fmtUzs(p.latest_version.previous.cash_price)}) → Yangi (${fmtUzs(p.latest_version.proposed.cash_price)})</div>`
+                    : ""
+                  }
                     </div>
                     <div class="flex-gap">
                       ${statusBadge(p.status)}
@@ -274,9 +278,9 @@ export async function renderAdminPortalView(container, refreshAuthCallback) {
                     </div>
                   </div>
                 </div>`
-                  )
-                  .join("")
-              : `<p class="text-muted">Moderatsiya navbati bo‘sh.</p>`
+              )
+              .join("")
+            : `<p class="text-muted">Moderatsiya navbati bo‘sh.</p>`
           }
           <h3 class="mt-4">Moderatsiya tarixi</h3>
           <div class="table-wrap mt-2">
@@ -313,24 +317,24 @@ export async function renderAdminPortalView(container, refreshAuthCallback) {
             <div class="card" style="background:var(--bg-subtle);">
               <h4>Kategoriyalar va Nasiya ruxsati</h4>
               ${cats.results
-                .map(
-                  (c) => `<div class="flex-between text-sm mb-2">
+            .map(
+              (c) => `<div class="flex-between text-sm mb-2">
                             <span><strong>${esc(c.name)}</strong> (${esc(c.slug)})</span>
                             ${c.installment_allowed ? `<span class="badge badge-success">Nasiya ruxsat</span>` : `<span class="badge badge-danger">Taqiqlangan (27.1)</span>`}
                           </div>`
-                )
-                .join("")}
+            )
+            .join("")}
             </div>
             <div class="card" style="background:var(--bg-subtle);">
               <h4>Faol Promo-kodlar</h4>
               ${cms.promos
-                .map(
-                  (p) => `<div class="flex-between text-sm mb-2">
+            .map(
+              (p) => `<div class="flex-between text-sm mb-2">
                             <span><strong>${esc(p.code)}</strong> — ${esc(p.title)}</span>
                             <span class="tabular text-xs">Byudjet: ${fmtUzs(p.used_budget_uzs)} / ${fmtUzs(p.max_budget_uzs)}</span>
                           </div>`
-                )
-                .join("")}
+            )
+            .join("")}
             </div>
           </div>
           <h4>CMS Bosh sahifa bannerlari</h4>
@@ -367,8 +371,8 @@ export async function renderAdminPortalView(container, refreshAuthCallback) {
               <thead><tr><th>Reja</th><th>Muddat</th><th>Yillik ustama %</th><th>Komissiya %</th><th>Kechikish/kun</th><th>Versiya</th></tr></thead>
               <tbody>
                 ${plans.results
-                  .map((p) => `<tr><td><strong>${esc(p.name)}</strong></td><td>${p.months} oy</td><td>${p.annual_markup_pct}%</td><td>${p.commission_pct}%</td><td>${p.late_fee_daily_pct}%</td><td>${esc(p.compliance_version)}</td></tr>`)
-                  .join("")}
+            .map((p) => `<tr><td><strong>${esc(p.name)}</strong></td><td>${p.months} oy</td><td>${p.annual_markup_pct}%</td><td>${p.commission_pct}%</td><td>${p.late_fee_daily_pct}%</td><td>${esc(p.compliance_version)}</td></tr>`)
+            .join("")}
               </tbody>
             </table>
           </div>
@@ -422,8 +426,8 @@ export async function renderAdminPortalView(container, refreshAuthCallback) {
               <thead><tr><th>Provayder</th><th>External ID</th><th>Buyurtma / Shartnoma</th><th>Summa (so‘m / tiyin)</th><th>Bosqich</th><th>Imzo</th><th>Vaqt</th></tr></thead>
               <tbody>
                 ${pspData.transactions
-                  .map(
-                    (t) => `
+            .map(
+              (t) => `
                   <tr>
                     <td><strong>${esc(t.psp_provider)}</strong></td>
                     <td class="text-xs">${esc(t.external_trans_id)}</td>
@@ -433,8 +437,8 @@ export async function renderAdminPortalView(container, refreshAuthCallback) {
                     <td>${t.signature_verified ? `<span class="badge badge-success">✓ Tekshirilgan</span>` : `<span class="badge badge-danger">✕ Xato</span>`}</td>
                     <td class="text-xs">${fmtDate(t.created_at)}</td>
                   </tr>`
-                  )
-                  .join("") || "<tr><td colspan='7'>Tranzaksiyalar yo‘q</td></tr>"}
+            )
+            .join("") || "<tr><td colspan='7'>Tranzaksiyalar yo‘q</td></tr>"}
               </tbody>
             </table>
           </div>
@@ -444,8 +448,8 @@ export async function renderAdminPortalView(container, refreshAuthCallback) {
               <thead><tr><th>Bank</th><th>Muhit</th><th>Uptime</th><th>Latency</th><th>Holat</th><th>Adapter testi</th></tr></thead>
               <tbody>
                 ${bData.banks
-                  .map(
-                    (b) => `
+            .map(
+              (b) => `
                   <tr>
                     <td><strong>${esc(b.name)}</strong> (${esc(b.code)})</td>
                     <td>${esc(b.environment)}</td>
@@ -459,8 +463,8 @@ export async function renderAdminPortalView(container, refreshAuthCallback) {
                       </div>
                     </td>
                   </tr>`
-                  )
-                  .join("")}
+            )
+            .join("")}
               </tbody>
             </table>
           </div>
@@ -551,16 +555,15 @@ export async function renderAdminPortalView(container, refreshAuthCallback) {
             <table class="data-table tabular text-sm">
               <thead><tr><th>Provayder</th><th>Tasdiqlangan cheklar</th><th>Jami tushum</th><th>PSP Settled</th><th>Bekor qilingan</th></tr></thead>
               <tbody>
-                ${
-                  providers.length
-                    ? providers
-                        .map(
-                          (pv) =>
-                            `<tr><td class="fw-bold">${esc(pv.provider)}</td><td>${pv.tx_count}</td><td class="fw-bold">${fmtUzs(pv.total_amount_uzs)}</td><td>${pv.psp_settled_count}</td><td>${pv.psp_cancelled_count}</td></tr>`
-                        )
-                        .join("")
-                    : `<tr><td colspan="5" class="text-muted">Hozircha tasdiqlangan to‘lovlar yo‘q.</td></tr>`
-                }
+                ${providers.length
+            ? providers
+              .map(
+                (pv) =>
+                  `<tr><td class="fw-bold">${esc(pv.provider)}</td><td>${pv.tx_count}</td><td class="fw-bold">${fmtUzs(pv.total_amount_uzs)}</td><td>${pv.psp_settled_count}</td><td>${pv.psp_cancelled_count}</td></tr>`
+              )
+              .join("")
+            : `<tr><td colspan="5" class="text-muted">Hozircha tasdiqlangan to‘lovlar yo‘q.</td></tr>`
+          }
               </tbody>
             </table>
           </div>
@@ -570,16 +573,15 @@ export async function renderAdminPortalView(container, refreshAuthCallback) {
             <table class="data-table tabular text-sm">
               <thead><tr><th>Sana</th><th>Mijoz</th><th>Maqsad</th><th>Provayder</th><th>Summa</th><th>Holat</th><th>Chek</th></tr></thead>
               <tbody>
-                ${
-                  recentPayments.length
-                    ? recentPayments
-                        .map(
-                          (p) =>
-                            `<tr><td>${fmtDate(p.created_at)}</td><td>${esc(p.customer_name)} <small class="text-muted">${esc(p.customer_phone)}</small></td><td>${esc(p.target_kind)} #${esc(p.target_ref)}</td><td>${esc(p.provider)}</td><td class="fw-bold">${fmtUzs(p.amount)}</td><td>${statusBadge(p.status)}</td><td><button type="button" class="btn btn-outline btn-xs" data-adm-receipt="${esc(p.id)}">🧾 Chek</button></td></tr>`
-                        )
-                        .join("")
-                    : `<tr><td colspan="7" class="text-muted">To‘lov yozuvlari yo‘q.</td></tr>`
-                }
+                ${recentPayments.length
+            ? recentPayments
+              .map(
+                (p) =>
+                  `<tr><td>${fmtDate(p.created_at)}</td><td>${esc(p.customer_name)} <small class="text-muted">${esc(p.customer_phone)}</small></td><td>${esc(p.target_kind)} #${esc(p.target_ref)}</td><td>${esc(p.provider)}</td><td class="fw-bold">${fmtUzs(p.amount)}</td><td>${statusBadge(p.status)}</td><td><button type="button" class="btn btn-outline btn-xs" data-adm-receipt="${esc(p.id)}">🧾 Chek</button></td></tr>`
+              )
+              .join("")
+            : `<tr><td colspan="7" class="text-muted">To‘lov yozuvlari yo‘q.</td></tr>`
+          }
               </tbody>
             </table>
           </div>
@@ -634,22 +636,21 @@ export async function renderAdminPortalView(container, refreshAuthCallback) {
               <thead><tr><th>Shartnoma</th><th>Yangi muddat</th><th>Sabab</th><th>Tayyorladi</th><th>Holat</th><th>Checker qarori</th></tr></thead>
               <tbody>
                 ${col.restructuring_cases
-                  .map(
-                    (r) => `
+            .map(
+              (r) => `
                   <tr>
                     <td>${esc(r.contract_number)}</td>
                     <td>${r.proposed_new_months} oy</td>
                     <td>${esc(r.reason)}</td>
                     <td>${esc(r.requested_by)}</td>
                     <td>${statusBadge(r.status)}</td>
-                    <td>${
-                      r.status === "PENDING_CHECKER"
-                        ? `<button class="btn btn-success btn-sm" data-rest-dec="${esc(r.id)}">Ikkinchi tasdiq</button>`
-                        : esc(r.approved_by || "—")
-                    }</td>
+                    <td>${r.status === "PENDING_CHECKER"
+                  ? `<button class="btn btn-success btn-sm" data-rest-dec="${esc(r.id)}">Ikkinchi tasdiq</button>`
+                  : esc(r.approved_by || "—")
+                }</td>
                   </tr>`
-                  )
-                  .join("")}
+            )
+            .join("")}
               </tbody>
             </table>
           </div>
@@ -709,35 +710,34 @@ export async function renderAdminPortalView(container, refreshAuthCallback) {
             <div>
               <h3>Fraud ishlari (${fr.results.length})</h3>
               ${fr.results
-                .map(
-                  (c) => `
+            .map(
+              (c) => `
                 <div class="card mb-2" style="background:var(--bg-subtle);">
                   <div class="flex-between"><strong>${esc(c.signal_type)}</strong> ${statusBadge(c.status)}</div>
                   <p class="text-sm mt-1">${esc(c.summary)}</p>
-                  ${
-                    c.status === "OPEN"
-                      ? `<div class="flex-gap mt-2">
+                  ${c.status === "OPEN"
+                  ? `<div class="flex-gap mt-2">
                            <button class="btn btn-success btn-sm" data-fr-dec="${esc(c.id)}" data-st="CLEARED">Toza deb yopish</button>
                            <button class="btn btn-danger btn-sm" data-fr-dec="${esc(c.id)}" data-st="CONFIRMED">Tasdiqlash</button>
                          </div>`
-                      : ""
-                  }
+                  : ""
+                }
                 </div>`
-                )
-                .join("")}
+            )
+            .join("")}
             </div>
             <div>
               <h3>Xavfsizlik alertlari (${sec.results.length})</h3>
               ${sec.results
-                .map(
-                  (s) => `
+            .map(
+              (s) => `
                 <div class="card mb-2" style="background:var(--bg-subtle);">
                   <div class="flex-between"><strong>${esc(s.event_type)}</strong> <span class="badge ${s.resolved ? "badge-success" : "badge-warning"}">${s.resolved ? "Yopilgan" : esc(s.severity)}</span></div>
                   <div class="text-sm mt-1">${esc(s.description)}</div>
                   ${!s.resolved ? `<button class="btn btn-outline btn-sm mt-2" data-sec-res="${esc(s.id)}">Hal qilindi</button>` : ""}
                 </div>`
-                )
-                .join("")}
+            )
+            .join("")}
             </div>
           </div>
         `;
@@ -766,33 +766,32 @@ export async function renderAdminPortalView(container, refreshAuthCallback) {
             <div>
               <h3>Ticketlar (${tk.results.length})</h3>
               ${tk.results
-                .map(
-                  (t) => `<div class="card mb-2" style="background:var(--bg-subtle);">
+            .map(
+              (t) => `<div class="card mb-2" style="background:var(--bg-subtle);">
                             <div class="flex-between"><strong>#${esc(t.ticket_number)} — ${esc(t.subject)}</strong> ${statusBadge(t.status)}</div>
                             <div class="text-xs text-muted">${esc(t.user_name)} • SLA: ${t.sla_hours} soat</div>
                             ${t.messages.map((m) => `<div class="text-sm mt-1"><strong>${esc(m.sender)}:</strong> ${esc(m.text)}</div>`).join("")}
                           </div>`
-                )
-                .join("")}
+            )
+            .join("")}
             </div>
             <div>
               <h3>Skoring qarorlari</h3>
               ${ra.results
-                .map(
-                  (r) => `<div class="card mb-2" style="background:var(--bg-subtle);">
+            .map(
+              (r) => `<div class="card mb-2" style="background:var(--bg-subtle);">
                             <div class="flex-between"><strong>${esc(r.user_name)}</strong> ${statusBadge(r.decision)}</div>
                             <div class="text-xs mt-1">Ball: ${r.score} • Apellyatsiya: ${esc(r.appeal_status)}</div>
-                            ${
-                              r.appeal_status === "APPEALED"
-                                ? `<div class="flex-gap mt-2">
+                            ${r.appeal_status === "APPEALED"
+                  ? `<div class="flex-gap mt-2">
                                      <button class="btn btn-success btn-sm" data-ra-act="${esc(r.id)}" data-a="OVERTURN">Qayta tasdiqlash</button>
                                      <button class="btn btn-danger btn-sm" data-ra-act="${esc(r.id)}" data-a="UPHOLD">O‘z kuchida</button>
                                    </div>`
-                                : ""
-                            }
+                  : ""
+                }
                           </div>`
-                )
-                .join("")}
+            )
+            .join("")}
             </div>
           </div>
         `;
@@ -820,21 +819,20 @@ export async function renderAdminPortalView(container, refreshAuthCallback) {
               <thead><tr><th>Amal</th><th>Sabab</th><th>Tayyorladi</th><th>Holat</th><th>Tasdiq</th></tr></thead>
               <tbody>
                 ${stData.maker_checker_requests
-                  .map(
-                    (m) => `
+            .map(
+              (m) => `
                   <tr>
                     <td><strong>${esc(m.action_type)}</strong></td>
                     <td>${esc(m.reason)}</td>
                     <td>${esc(m.requested_by)}</td>
                     <td>${statusBadge(m.status)}</td>
-                    <td>${
-                      m.status === "PENDING"
-                        ? `<button class="btn btn-success btn-sm" data-mc-ok="${esc(m.id)}">Tasdiqlash</button>`
-                        : esc(m.approved_by || "—")
-                    }</td>
+                    <td>${m.status === "PENDING"
+                  ? `<button class="btn btn-success btn-sm" data-mc-ok="${esc(m.id)}">Tasdiqlash</button>`
+                  : esc(m.approved_by || "—")
+                }</td>
                   </tr>`
-                  )
-                  .join("") || "<tr><td colspan='5'>Kutilayotgan so‘rovlar yo‘q</td></tr>"}
+            )
+            .join("") || "<tr><td colspan='5'>Kutilayotgan so‘rovlar yo‘q</td></tr>"}
               </tbody>
             </table>
           </div>
@@ -845,11 +843,11 @@ export async function renderAdminPortalView(container, refreshAuthCallback) {
               <thead><tr><th>Vaqt</th><th>Xodim / Rol</th><th>Amal</th><th>Obyekt</th><th>Sabab</th><th>Correlation ID</th></tr></thead>
               <tbody>
                 ${audData.results
-                  .slice(0, 25)
-                  .map(
-                    (a) => `<tr><td>${fmtDate(a.created_at)}</td><td><strong>${esc(a.actor)}</strong><br>${esc(a.actor_role)}</td><td>${esc(a.action)}</td><td>${esc(a.object_type)}</td><td>${esc(a.reason)}</td><td class="tabular">${esc(a.correlation_id)}</td></tr>`
-                  )
-                  .join("")}
+            .slice(0, 25)
+            .map(
+              (a) => `<tr><td>${fmtDate(a.created_at)}</td><td><strong>${esc(a.actor)}</strong><br>${esc(a.actor_role)}</td><td>${esc(a.action)}</td><td>${esc(a.object_type)}</td><td>${esc(a.reason)}</td><td class="tabular">${esc(a.correlation_id)}</td></tr>`
+            )
+            .join("")}
               </tbody>
             </table>
           </div>
@@ -924,8 +922,8 @@ export async function renderAdminPortalView(container, refreshAuthCallback) {
               <thead><tr><th>Mijoz</th><th>Shartnoma</th><th>Oy #</th><th>Sana</th><th>Muddat holati</th><th>To‘lanadigan summa</th><th>Eslatma</th></tr></thead>
               <tbody>
                 ${dm.queue
-                  .map(
-                    (q) => `
+            .map(
+              (q) => `
                   <tr>
                     <td><strong>${esc(q.customer_name)}</strong><br><span class="text-xs text-muted">${esc(q.customer_phone_masked)}</span></td>
                     <td class="fw-bold">${esc(q.contract_number)}</td>
@@ -938,8 +936,8 @@ export async function renderAdminPortalView(container, refreshAuthCallback) {
                       <button class="btn btn-primary btn-sm" data-dm-send="${esc(q.schedule_item_id)}">Eslatma yuborish</button>
                     </td>
                   </tr>`
-                  )
-                  .join("") || "<tr><td colspan='7'>Yaqin 30 kun ichida to‘lovlar yo‘q</td></tr>"}
+            )
+            .join("") || "<tr><td colspan='7'>Yaqin 30 kun ichida to‘lovlar yo‘q</td></tr>"}
               </tbody>
             </table>
           </div>
@@ -950,8 +948,8 @@ export async function renderAdminPortalView(container, refreshAuthCallback) {
               <thead><tr><th>Mijoz</th><th>Shartnoma</th><th>Oynasi</th><th>Kanal</th><th>Summa</th><th>Muddat</th><th>Vaqt</th></tr></thead>
               <tbody>
                 ${dm.recent_reminders
-                  .map((r) => `<tr><td>${esc(r.customer_name)}</td><td>${esc(r.contract_number)}</td><td>${esc(r.window_tag)}</td><td><span class="badge badge-navy">${esc(r.channel)}</span></td><td>${fmtUzs(r.amount_due_uzs)}</td><td>${esc(r.due_date)}</td><td>${fmtDate(r.created_at)}</td></tr>`)
-                  .join("") || "<tr><td colspan='7'>Hali eslatmalar yuborilmagan</td></tr>"}
+            .map((r) => `<tr><td>${esc(r.customer_name)}</td><td>${esc(r.contract_number)}</td><td>${esc(r.window_tag)}</td><td><span class="badge badge-navy">${esc(r.channel)}</span></td><td>${fmtUzs(r.amount_due_uzs)}</td><td>${esc(r.due_date)}</td><td>${fmtDate(r.created_at)}</td></tr>`)
+            .join("") || "<tr><td colspan='7'>Hali eslatmalar yuborilmagan</td></tr>"}
               </tbody>
             </table>
           </div>
@@ -1029,19 +1027,18 @@ export async function renderAdminPortalView(container, refreshAuthCallback) {
               </div>
               ${isAuditor ? `<span class="badge badge-navy">Auditor: Faqat ko‘rish</span>` : ""}
             </div>
-            ${
-              isAuditor
-                ? `<div class="text-sm text-muted">Auditor rejimi: siz barcha nazorat xabarlari va kredit ahvolini ko‘rasiz, qo‘lda qayta skoring faqat Risk Manager / Admin uchun.</div>`
-                : `<form id="sup-inspect-form" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));align-items:end;gap:10px;">
+            ${isAuditor
+            ? `<div class="text-sm text-muted">Auditor rejimi: siz barcha nazorat xabarlari va kredit ahvolini ko‘rasiz, qo‘lda qayta skoring faqat Risk Manager / Admin uchun.</div>`
+            : `<form id="sup-inspect-form" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));align-items:end;gap:10px;">
                      <div class="form-group" style="margin:0;min-width:0;">
                        <label class="form-label" for="sup-user-id">Ro‘yxatdan mijoz tanlash</label>
                        <select id="sup-user-id" class="form-control" style="max-width:100%;">
                          <option value="">— Telefon orqali —</option>
                          ${customersList
-                           .map(
-                             (c) => `<option value="${esc(c.user_id)}">${esc(c.full_name)} (${esc(c.phone_raw)})</option>`
-                           )
-                           .join("")}
+              .map(
+                (c) => `<option value="${esc(c.user_id)}">${esc(c.full_name)} (${esc(c.phone_raw)})</option>`
+              )
+              .join("")}
                        </select>
                      </div>
                      <div class="form-group" style="margin:0;min-width:0;">
@@ -1061,7 +1058,7 @@ export async function renderAdminPortalView(container, refreshAuthCallback) {
                      </div>
                      <button type="submit" class="btn btn-gold" style="width:100%;">🛡 Tekshirish & Xabar</button>
                    </form>`
-            }
+          }
           </div>
 
           <div class="card mb-4">
@@ -1070,14 +1067,13 @@ export async function renderAdminPortalView(container, refreshAuthCallback) {
               <span class="badge badge-navy">Real vaqt monitoring</span>
             </div>
             <div style="display:flex;flex-direction:column;gap:8px;max-height:280px;overflow:auto;">
-              ${
-                alertsList.length
-                  ? alertsList
-                      .map((a) => {
-                        const isDanger = ["OVERDUE_BLOCKED", "MIB_DEBT_BLOCKED", "DSTI_DECLINED_CASH_ONLY"].includes(a.condition_code);
-                        const isWarn = a.condition_code === "ACTIVE_CREDIT_CASH_ONLY";
-                        const bg = isDanger ? "var(--danger-bg)" : isWarn ? "rgba(217,119,6,0.12)" : "var(--bg-subtle)";
-                        return `
+              ${alertsList.length
+            ? alertsList
+              .map((a) => {
+                const isDanger = ["OVERDUE_BLOCKED", "MIB_DEBT_BLOCKED", "DSTI_DECLINED_CASH_ONLY"].includes(a.condition_code);
+                const isWarn = a.condition_code === "ACTIVE_CREDIT_CASH_ONLY";
+                const bg = isDanger ? "var(--danger-bg)" : isWarn ? "rgba(217,119,6,0.12)" : "var(--bg-subtle)";
+                return `
                           <div style="padding:10px 12px;border-radius:10px;background:${bg};border:1px solid var(--border-color);">
                             <div class="flex-between" style="flex-wrap:wrap;gap:6px;">
                               <strong>${esc(a.title)}</strong>
@@ -1085,10 +1081,10 @@ export async function renderAdminPortalView(container, refreshAuthCallback) {
                             </div>
                             <div class="text-xs mt-1">${esc(a.body_masked)}</div>
                           </div>`;
-                      })
-                      .join("")
-                  : `<div class="text-sm text-muted">Hali kredit nazorati xabarlari qayd etilmagan.</div>`
-              }
+              })
+              .join("")
+            : `<div class="text-sm text-muted">Hali kredit nazorati xabarlari qayd etilmagan.</div>`
+          }
             </div>
           </div>
 
@@ -1097,11 +1093,10 @@ export async function renderAdminPortalView(container, refreshAuthCallback) {
             <table class="data-table text-sm tabular">
               <thead><tr><th>Mijoz</th><th>Telefon (niqob)</th><th>KYC</th><th>Kredit Ahvoli</th><th>Tafsilot</th><th>Savdo Rejimi</th></tr></thead>
               <tbody>
-                ${
-                  customersList
-                    .map((c) => {
-                      const cp = c.credit_policy || {};
-                      return `
+                ${customersList
+            .map((c) => {
+              const cp = c.credit_policy || {};
+              return `
                         <tr>
                           <td><strong>${esc(c.full_name)}</strong></td>
                           <td class="text-xs">${esc(c.phone_masked)}</td>
@@ -1110,9 +1105,9 @@ export async function renderAdminPortalView(container, refreshAuthCallback) {
                           <td class="text-xs" style="max-width:340px;">${esc(cp.credit_condition_detail || "")}</td>
                           <td><span class="badge ${cp.cash_only_required ? "badge-danger" : "badge-success"}">${esc(cp.trading_mode_label || "Nasiya ochiq")}</span></td>
                         </tr>`;
-                    })
-                    .join("") || "<tr><td colspan='6'>Mijozlar topilmadi</td></tr>"
-                }
+            })
+            .join("") || "<tr><td colspan='6'>Mijozlar topilmadi</td></tr>"
+          }
               </tbody>
             </table>
           </div>
@@ -1123,8 +1118,8 @@ export async function renderAdminPortalView(container, refreshAuthCallback) {
               <thead><tr><th>Mijoz</th><th>PINFL / INN (niqob)</th><th>KATM Ball</th><th>MIB Holati</th><th>Boshqa kredit/oy</th><th>DSTI % (≤50%)</th><th>Limit</th><th>Kredit Ahvoli / Savdo</th><th>Qaror</th></tr></thead>
               <tbody>
                 ${sc.reports
-                  .map(
-                    (r) => `
+            .map(
+              (r) => `
                   <tr>
                     <td><strong>${esc(r.customer_name)}</strong><br><span class="text-xs text-muted">${fmtDate(r.created_at)}</span></td>
                     <td class="text-xs">PINFL: ${esc(r.pinfl_masked)}<br>INN: ${esc(r.inn_masked || "—")}</td>
@@ -1136,8 +1131,8 @@ export async function renderAdminPortalView(container, refreshAuthCallback) {
                     <td>${conditionBadge(r.credit_policy)}<br><span class="badge mt-1 ${r.credit_policy?.cash_only_required ? "badge-danger" : "badge-success"}">${esc(r.credit_policy?.trading_mode_label || "")}</span></td>
                     <td>${statusBadge(r.decision)}<br><span class="text-xs text-muted">${esc((r.decision_reasons || [])[0] || "")}</span></td>
                   </tr>`
-                  )
-                  .join("") || "<tr><td colspan='9'>Skoring hisobotlari hali yo‘q</td></tr>"}
+            )
+            .join("") || "<tr><td colspan='9'>Skoring hisobotlari hali yo‘q</td></tr>"}
               </tbody>
             </table>
           </div>

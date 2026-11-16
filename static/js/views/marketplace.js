@@ -74,15 +74,15 @@ export async function renderHomeView(container, reloadCartBadge) {
   const banners = data.banners && data.banners.length
     ? data.banners
     : [
-        {
-          badge_text: "ZARVON NASIYA",
-          title: "Kerakli mahsulot — qulay to‘lov bilan",
-          subtitle: "Bir nechta bank taklifini solishtiring va o‘zingizga mos to‘lovni tanlang.",
-          cta_label: "Mahsulotlarni ko‘rish",
-          target_route: "#catalog",
-          theme_variant: "navy",
-        },
-      ];
+      {
+        badge_text: "ZARVON NASIYA",
+        title: "Kerakli mahsulot — qulay to‘lov bilan",
+        subtitle: "Bir nechta bank taklifini solishtiring va o‘zingizga mos to‘lovni tanlang.",
+        cta_label: "Mahsulotlarni ko‘rish",
+        target_route: "#catalog",
+        theme_variant: "navy",
+      },
+    ];
 
   const slideVisuals = [
     "/static/img/hero-showcase.jpg",
@@ -120,15 +120,14 @@ export async function renderHomeView(container, reloadCartBadge) {
         <div class="hero-luxury-visual">
           <img id="hero-slide-img" src="${slideVisuals[0]}" alt="ZARVON elektronika va maishiy texnika kolleksiyasi">
         </div>
-        ${
-          banners.length > 1
-            ? `<button type="button" id="hero-prev" class="hero-nav-btn hero-nav-prev" aria-label="Oldingi slayd">‹</button>
+        ${banners.length > 1
+      ? `<button type="button" id="hero-prev" class="hero-nav-btn hero-nav-prev" aria-label="Oldingi slayd">‹</button>
                <button type="button" id="hero-next" class="hero-nav-btn hero-nav-next" aria-label="Keyingi slayd">›</button>
                <div class="hero-luxury-dots" id="hero-dots">
                  ${banners.map((_, idx) => `<button type="button" class="hero-dot ${idx === 0 ? "active" : ""}" data-hero-dot="${idx}" aria-label="${idx + 1}-slayd"></button>`).join("")}
                </div>`
-            : ""
-        }
+      : ""
+    }
       </div>
     </section>
 
@@ -136,9 +135,9 @@ export async function renderHomeView(container, reloadCartBadge) {
     <section class="cat-float-wrap" aria-label="Asosiy toifalar">
       <div class="cat-float-grid">
         ${topFiveCats
-          .map((c) => {
-            const thumb = STUDIO_CAT_THUMBS[c.slug] || "/static/img/products/iphone-16-pro.jpg";
-            return `
+      .map((c) => {
+        const thumb = STUDIO_CAT_THUMBS[c.slug] || "/static/img/products/iphone-16-pro.jpg";
+        return `
             <a href="#catalog?category=${esc(c.slug)}" class="cat-float-card">
               <div class="cat-float-thumb">
                 <img src="${esc(thumb)}" alt="${esc(c.name)}" loading="lazy">
@@ -148,8 +147,8 @@ export async function renderHomeView(container, reloadCartBadge) {
                 <span aria-hidden="true" style="color:var(--text-muted);">›</span>
               </div>
             </a>`;
-          })
-          .join("")}
+      })
+      .join("")}
       </div>
     </section>
 
@@ -293,14 +292,14 @@ export async function renderHomeView(container, reloadCartBadge) {
           </div>
           <div class="chegirma-matrix">
             ${promoDeals.map((p) => {
-              const oldPriceHtml = p.old_price && Number(p.old_price) > Number(p.cash_price)
-                ? `<div class="chegirma-old tabular">${fmtUzs(p.old_price)}</div>`
-                : `<div class="text-xs" style="color:#cbd5e1;">Maxsus narx</div>`;
-              const mPay = p.indicative_installment ? p.indicative_installment.monthly_payment : Math.ceil(Number(p.cash_price || 0) / 12);
-              const badgeHtml = p.discount_pct > 0
-                ? `<span class="chegirma-pct">-${esc(String(p.discount_pct))}%</span>`
-                : `<span class="chegirma-pct" style="background:var(--gold-500); color:var(--navy-900);">TOP</span>`;
-              return `
+        const oldPriceHtml = p.old_price && Number(p.old_price) > Number(p.cash_price)
+          ? `<div class="chegirma-old tabular">${fmtUzs(p.old_price)}</div>`
+          : `<div class="text-xs" style="color:#cbd5e1;">Maxsus narx</div>`;
+        const mPay = p.indicative_installment ? p.indicative_installment.monthly_payment : Math.ceil(Number(p.cash_price || 0) / 12);
+        const badgeHtml = p.discount_pct > 0
+          ? `<span class="chegirma-pct">-${esc(String(p.discount_pct))}%</span>`
+          : `<span class="chegirma-pct" style="background:var(--gold-500); color:var(--navy-900);">TOP</span>`;
+        return `
                 <article class="chegirma-card" data-chegirma-slug="${esc(p.slug)}" role="button" tabindex="0">
                   <div>
                     ${oldPriceHtml}
@@ -312,16 +311,15 @@ export async function renderHomeView(container, reloadCartBadge) {
                   ${badgeHtml}
                 </article>
               `;
-            }).join("")}
+      }).join("")}
           </div>
         </section>
       `;
     })()}
 
     <!-- 6. Multi-Bank Offers Comparison -->
-    ${
-      bankPartners.length
-        ? `<section class="mt-6" aria-label="Hamkor banklar takliflari">
+    ${bankPartners.length
+      ? `<section class="mt-6" aria-label="Hamkor banklar takliflari">
              <div class="flex-between mb-3">
                <div>
                  <h2 style="margin:0;">🏦 Banklarning nasiya takliflarini solishtiring</h2>
@@ -333,7 +331,7 @@ export async function renderHomeView(container, reloadCartBadge) {
                ${renderBankOffersHtml(bankPartners, initCalc.principal, 12)}
              </div>
            </section>`
-        : ""
+      : ""
     }
 
     <!-- 7. KATM + MIB Skoring CTA & Payment Gateways -->
@@ -545,8 +543,8 @@ export async function renderCatalogView(container, queryStr, reloadCartBadge) {
             <select id="f-cat" class="form-control">
               <option value="">Barcha kategoriyalar</option>
               ${homeMeta.categories
-                .map((c) => `<option value="${esc(c.slug)}" ${c.slug === category ? "selected" : ""}>${esc(c.name)}</option>`)
-                .join("")}
+      .map((c) => `<option value="${esc(c.slug)}" ${c.slug === category ? "selected" : ""}>${esc(c.name)}</option>`)
+      .join("")}
             </select>
           </div>
           <div class="form-group">
@@ -554,16 +552,16 @@ export async function renderCatalogView(container, queryStr, reloadCartBadge) {
             <select id="f-brand" class="form-control">
               <option value="">Barcha brendlar</option>
               ${homeMeta.brands
-                .map((b) => `<option value="${esc(b.slug)}" ${b.slug === brand ? "selected" : ""}>${esc(b.name)}</option>`)
-                .join("")}
+      .map((b) => `<option value="${esc(b.slug)}" ${b.slug === brand ? "selected" : ""}>${esc(b.name)}</option>`)
+      .join("")}
             </select>
           </div>
           <div class="form-group">
             <label class="form-label" for="f-months">Nasiya muddati (indikativ)</label>
             <select id="f-months" class="form-control">
               ${[3, 6, 9, 12]
-                .map((m) => `<option value="${m}" ${String(m) === String(months) ? "selected" : ""}>${m} oy</option>`)
-                .join("")}
+      .map((m) => `<option value="${m}" ${String(m) === String(months) ? "selected" : ""}>${m} oy</option>`)
+      .join("")}
             </select>
           </div>
           <div class="form-group">
@@ -584,15 +582,14 @@ export async function renderCatalogView(container, queryStr, reloadCartBadge) {
       </aside>
 
       <section>
-        ${
-          catalogData.results.length
-            ? `<div class="uzum-grid" style="grid-template-columns:repeat(auto-fill,minmax(215px,1fr));">${catalogData.results.map(renderProductCard).join("")}</div>`
-            : `<div class="state-box">
+        ${catalogData.results.length
+      ? `<div class="uzum-grid" style="grid-template-columns:repeat(auto-fill,minmax(215px,1fr));">${catalogData.results.map(renderProductCard).join("")}</div>`
+      : `<div class="state-box">
                  <h3>Mahsulotlar topilmadi</h3>
                  <p class="text-muted">Qidiruv so‘rovini yumshating yoki filtrlarni tozalab ko‘ring.</p>
                  <a href="#catalog" class="btn btn-primary mt-2">Barcha mahsulotlar</a>
                </div>`
-        }
+    }
       </section>
     </div>
   `;
@@ -656,8 +653,8 @@ export async function renderProductDetailView(container, slug, reloadCartBadge) 
       <!-- Left Gallery & Specs (Screen #12 Multi-Thumb Stage) -->
       <div class="card">
         ${(() => {
-          const imgs = (p.images && p.images.length) ? p.images : [p.primary_image || "/static/icons/product-default.svg"];
-          return `
+      const imgs = (p.images && p.images.length) ? p.images : [p.primary_image || "/static/icons/product-default.svg"];
+      return `
             <div class="pd-gallery-layout">
               <div class="pd-thumbs-col">
                 ${imgs.slice(0, 6).map((src, idx) => `
@@ -676,7 +673,7 @@ export async function renderProductDetailView(container, slug, reloadCartBadge) 
               </div>
             </div>
           `;
-        })()}
+    })()}
         <div class="mt-4">
           <h3>Texnik xususiyatlar</h3>
           <div class="table-wrap">
@@ -714,19 +711,21 @@ export async function renderProductDetailView(container, slug, reloadCartBadge) 
         <div class="mt-4 card" style="background:var(--navy-50);">
           <div class="flex-between mb-2">
             <h3 style="margin:0;">Nasiya (Muddatli to‘lov) kalkulyatori</h3>
-            <span class="badge badge-gold">Indikativ • Sandbox</span>
+            ${AppState.sandboxMode
+      ? `<span class="badge badge-gold">Indikativ • Sandbox</span>`
+      : `<span class="badge badge-navy">Dastlabki jadval</span>`
+    }
           </div>
 
-          ${
-            p.installment_eligible
-              ? `
+          ${p.installment_eligible
+      ? `
             <div class="flex-gap mb-3" id="prod-term-tabs">
               ${[3, 6, 9, 12]
-                .map(
-                  (m) =>
-                    `<button class="btn btn-sm ${m === 12 ? "btn-primary" : "btn-outline"}" data-calc-months="${m}">${m} oy</button>`
-                )
-                .join("")}
+        .map(
+          (m) =>
+            `<button class="btn btn-sm ${m === 12 ? "btn-primary" : "btn-outline"}" data-calc-months="${m}">${m} oy</button>`
+        )
+        .join("")}
             </div>
             <div class="form-group">
               <label class="form-label" for="prod-down-pay">Boshlang‘ich to‘lov (ixtiyoriy, so‘m)</label>
@@ -734,10 +733,10 @@ export async function renderProductDetailView(container, slug, reloadCartBadge) 
             </div>
             <div id="prod-calc-output" class="mt-2"></div>
           `
-              : `
+      : `
             <div class="badge badge-danger">⚠ Qonuniy cheklov (27.1): Ushbu toifa yoki narx (>250 BHM) uchun nasiya taqiqlangan. Faqat naqd/karta orqali xarid mumkin.</div>
           `
-          }
+    }
         </div>
 
         <a href="#nasiya-info" style="display:flex; justify-content:space-between; align-items:center; padding:9px 12px; border-radius:10px; background:var(--gold-100); border:1px solid #f0b429; color:var(--navy-900); font-weight:700; font-size:0.84rem; margin-top:10px;">
@@ -772,35 +771,32 @@ export async function renderProductDetailView(container, slug, reloadCartBadge) 
       </div>
 
       <div id="reviews-list" class="grid-2">
-        ${
-          p.reviews.length
-            ? p.reviews
-                .map(
-                  (r) => `
+        ${p.reviews.length
+      ? p.reviews
+        .map(
+          (r) => `
                 <div class="card" style="background:var(--bg-subtle);">
                   <div class="flex-between">
                     <strong>${esc(r.author)}</strong>
                     <span class="badge badge-success">✓ Tasdiqlangan xarid • ★ ${r.rating}/5</span>
                   </div>
                   <p class="text-sm mt-2">${esc(r.comment)}</p>
-                  ${
-                    r.seller_reply
-                      ? `<div class="text-xs text-secondary mt-2" style="padding-left:10px;border-left:3px solid var(--gold-500);">
+                  ${r.seller_reply
+              ? `<div class="text-xs text-secondary mt-2" style="padding-left:10px;border-left:3px solid var(--gold-500);">
                            <strong>Sotuvchi javobi:</strong> ${esc(r.seller_reply)}
                          </div>`
-                      : ""
-                  }
+              : ""
+            }
                   <div class="text-xs text-muted mt-2">${fmtDate(r.created_at)}</div>
                 </div>`
-                )
-                .join("")
-            : `<p class="text-muted">Hali sharhlar yo‘q.</p>`
-        }
+        )
+        .join("")
+      : `<p class="text-muted">Hali sharhlar yo‘q.</p>`
+    }
       </div>
 
-      ${
-        AppState.authenticated
-          ? `<form id="review-form" class="mt-4" style="border-top:1px solid var(--border-color);padding-top:14px;">
+      ${AppState.authenticated
+      ? `<form id="review-form" class="mt-4" style="border-top:1px solid var(--border-color);padding-top:14px;">
                <h4>Sharh qoldirish (faqat xarid qilganlar uchun)</h4>
                <div class="grid-2">
                  <div class="form-group">
@@ -820,17 +816,16 @@ export async function renderProductDetailView(container, slug, reloadCartBadge) 
                </div>
                <button type="submit" class="btn btn-outline btn-sm">Sharh yuborish</button>
              </form>`
-          : ""
-      }
+      : ""
+    }
     </section>
 
-    ${
-      p.similar_products && p.similar_products.length
-        ? `<section class="mt-6">
+    ${p.similar_products && p.similar_products.length
+      ? `<section class="mt-6">
              <h2>O‘xshash mahsulotlar</h2>
              <div class="grid-4 mt-3">${p.similar_products.map(renderProductCard).join("")}</div>
            </section>`
-        : ""
+      : ""
     }
   `;
 
@@ -1134,21 +1129,20 @@ export async function renderCalculatorView(container) {
           <div class="kpi-card"><div class="kpi-label">Jami to‘lov</div><div class="kpi-value" style="font-size:1.15rem;">${fmtUzs(q.total_payable)}</div></div>
         </div>
         ${buildAmortizationSvg(q.preview_schedule, q.principal, q.total_extra)}
-        ${
-          (homeData.bank_partners || []).length
-            ? `<div class="mb-3">
+        ${(homeData.bank_partners || []).length
+          ? `<div class="mb-3">
                  <div class="text-xs fw-bold text-muted mb-2">Hamkor banklar taqqoslamasi (${fmtUzs(q.principal)} asosida):</div>
                  <div class="bank-offer-grid">${renderBankOffersHtml(homeData.bank_partners, q.principal, q.months)}</div>
                </div>`
-            : ""
+          : ""
         }
         <div class="table-wrap" style="max-height:260px;overflow-y:auto;">
           <table class="data-table tabular">
             <thead><tr><th>#</th><th>To‘lov sanasi</th><th>Summa</th></tr></thead>
             <tbody>
               ${q.preview_schedule
-                .map((row) => `<tr><td>${row.installment_no}-oy</td><td>${fmtDate(row.due_date)}</td><td class="fw-bold">${fmtUzs(row.amount)}</td></tr>`)
-                .join("")}
+          .map((row) => `<tr><td>${row.installment_no}-oy</td><td>${fmtDate(row.due_date)}</td><td class="fw-bold">${fmtUzs(row.amount)}</td></tr>`)
+          .join("")}
             </tbody>
           </table>
         </div>

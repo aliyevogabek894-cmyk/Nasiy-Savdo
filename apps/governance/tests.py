@@ -1350,3 +1350,91 @@ class UzumPspAndMarketplaceFlowTests(_DjangoTestCase):
         self.assertGreaterEqual(providers_map.get("Click", 0), expected_after_first)
         self.assertGreaterEqual(len(adm_rep.data["recent_payments"]), 3)
         self.assertTrue(PaymentRecord.objects.filter(id=paynet_payment_id).exists())
+
+    def test_production_mode_hides_demo_accounts_uses_real_flow_and_sms_gateway(self):
+        import base64
+        from unittest.mock import patch
+        from django.test import override_settings
+        from apps.commerce.models import Order
+        from apps.finance.models import PaymentRecord
+
+        with override_settings(
+            ZARVON_SANDBOX_MODE=False,
+            PAYME_MERCHANT_ID="live_mid_999",
+            PAYME_CASHBOX_KEY="live_key_999",
+        ):
+            # 1. MeView exposes sandbox_mode=False & empty demo_accounts; demo-switch returns 403
+            self.client.force_authenticate(user=None)
+            me = self.client.get("/api/v1/auth/me/")
+            self.assertEqual(me.status_code, 200)
+            self.assertFalse(me.data["sandbox_mode"])
+            self.assertEqual(me.data["demo_accounts"], [])
+
+            sw = self.client.post("/api/v1/auth/demo-switch/", {"role": "SUPER_ADMIN"}, format="json")
+            self.assertEqual(sw.status_code, 403)
+
+            # 2. RequestOtpView uses SMS gateway & never leaks demo_otp_preview in production
+            with patch("apps.accounts.views.send_otp_sms", return_value={"sent": True, "provider": "ESKIZ"}) as mock_sms:
+                otp_res = self.client.post("/api/v1/auth/otp/request/", {"target": "+998901234567", "purpose": "LOGIN"}, format="json")
+            self.assertEqual(otp_res.status_code, 200)
+            self.assertIsNone(otp_res.data["demo_otp_preview"])
+            self.assertEqual(otp_res.data["sms_provider"], "ESKIZ")
+            mock_sms.assert_called_once()
+
+            # 3. Direct-pay checkout creates Pending order (not auto-paid) & checkout.paycom.uz link
+            self.client.force_authenticate(user=self.customer)
+            chk = self.client.post(
+                "/api/v1/commerce/checkout/",
+                {
+                    "idempotency_key": f"prod-chk-{self.product.id}",
+                    "items": [{"product_id": str(self.product.id), "quantity": 1}],
+                    "delivery_type": "COURIER",
+                    "delivery_address": "Toshkent, Chilonzor",
+                    "payment_channel": "DIRECT_PAY",
+                    "psp_provider": "Payme",
+                },
+                format="json",
+            )
+            self.assertEqual(chk.status_code, 201, chk.data)
+            self.assertEqual(chk.data["order_status"], "Pending")
+            self.assertFalse(chk.data["sandbox_mode"])
+            order_num = chk.data["order_number"]
+            order_obj = Order.objects.get(order_number=order_num)
+            self.assertEqual(PaymentRecord.objects.filter(order=order_obj).count(), 0)
+            psp_out = chk.data["finance"]["psp_checkout"]
+            self.assertEqual(psp_out["mode"], "PRODUCTION")
+            self.assertIn("https://checkout.paycom.uz/", psp_out["checkout_url"])
+
+            # 4. PspCheckoutAndSimulatorView returns LIVE_CHECKOUT_INTENT without auto-settling
+            intent = self.client.post(
+                "/api/v1/finance/psp/checkout/",
+                {"reference": order_num, "psp_provider": "Payme"},
+                format="json",
+            )
+            self.assertEqual(intent.status_code, 200, intent.data)
+            self.assertEqual(intent.data["mode"], "LIVE_CHECKOUT_INTENT")
+            self.assertIn("detail", intent.data)
+            self.assertEqual(PaymentRecord.objects.filter(order=order_obj).count(), 0)
+
+            # 5. Live Payme webhook settles order -> Confirmed + SUCCEEDED PaymentRecord (is_demo=False)
+            live_auth = "Basic " + base64.b64encode(b"Paycom:live_key_999").decode("utf-8")
+            tiyin = int(order_obj.total_amount) * 100
+            r_cr = self.client.post(
+                "/payments/payme/",
+                {"jsonrpc": "2.0", "id": 1, "method": "CreateTransaction", "params": {"id": "pm_live_001", "time": 1700000001000, "amount": tiyin, "account": {"order_id": order_num}}},
+                format="json",
+                HTTP_AUTHORIZATION=live_auth,
+            )
+            self.assertEqual(r_cr.data["result"]["state"], 1)
+            r_pf = self.client.post(
+                "/payments/payme/",
+                {"jsonrpc": "2.0", "id": 2, "method": "PerformTransaction", "params": {"id": "pm_live_001"}},
+                format="json",
+                HTTP_AUTHORIZATION=live_auth,
+            )
+            self.assertEqual(r_pf.data["result"]["state"], 2)
+            order_obj.refresh_from_db()
+            self.assertEqual(order_obj.status, "Confirmed")
+            pay_rec = PaymentRecord.objects.get(order=order_obj)
+            self.assertEqual(pay_rec.status, "SUCCEEDED")
+            self.assertFalse(pay_rec.is_demo)

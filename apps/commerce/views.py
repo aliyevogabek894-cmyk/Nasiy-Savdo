@@ -258,7 +258,8 @@ class CheckoutView(APIView):
         total_amount = max(1000, subtotal - discount)
 
         payment_channel = request.data.get("payment_channel") or "DIRECT_PAY"
-        payment_method_label = request.data.get("payment_method_label") or "Payme (Sandbox)"
+        default_pay_label = "Payme (Sandbox)" if settings.ZARVON_SANDBOX_MODE else "Payme"
+        payment_method_label = request.data.get("payment_method_label") or default_pay_label
         delivery_type = request.data.get("delivery_type") or "COURIER"
         delivery_address = (request.data.get("delivery_address") or "Toshkent shahri").strip()
         delivery_point = None
@@ -301,7 +302,10 @@ class CheckoutView(APIView):
                 transaction.set_rollback(True)
                 return Response({"detail": f"{p.title}: {err}"}, status=status.HTTP_409_CONFLICT)
 
-        initial_order_status = OrderStatus.CONFIRMED if payment_channel == "DIRECT_PAY" else OrderStatus.AWAITING_FINANCE
+        if payment_channel == "DIRECT_PAY":
+            initial_order_status = OrderStatus.CONFIRMED if settings.ZARVON_SANDBOX_MODE else OrderStatus.PENDING
+        else:
+            initial_order_status = OrderStatus.AWAITING_FINANCE
         master = Order.objects.create(
             order_number=order_num,
             customer=request.user,
@@ -412,7 +416,7 @@ class CheckoutView(APIView):
                 customer=request.user,
                 plan=plan,
                 provider_type="OWN_NASIYA",
-                provider_name="ZARVON Nasiya Operator (Sandbox DEMO)",
+                provider_name="ZARVON Nasiya Operator (Sandbox DEMO)" if settings.ZARVON_SANDBOX_MODE else "ZARVON Nasiya Operator",
                 principal_amount=principal,
                 down_payment=down_payment,
                 markup_amount=quote["markup_amount"],
@@ -481,30 +485,31 @@ class CheckoutView(APIView):
         else:
             # Direct Pay via local PSP adapter (Payme / Click / Uzum Bank / Paynet / Uzcard-Humo)
             psp_name = str(request.data.get("psp_provider") or "Payme").strip()
-            ext_id = f"PAY-{uuid.uuid4().hex[:10].upper()}"
-            PaymentRecord.objects.create(
-                payment_intent_id=ext_id,
-                provider=psp_name,
-                user=request.user,
-                order=master,
-                amount=total_amount,
-                status="SUCCEEDED",
-                reconciliation_ref=f"REC-{order_num}",
-                is_demo=settings.ZARVON_SANDBOX_MODE,
-            )
-            PspTransaction.objects.create(
-                psp_provider=psp_name,
-                external_trans_id=ext_id,
-                merchant_trans_id=order_num,
-                action_stage="PERFORMED",
-                amount_tiyin=int(total_amount) * 100,
-                state_code=2,
-                signature_verified=True,
-                idempotency_key=f"direct-{ext_id}",
-                order=master,
-                raw_payload_sanitized={"channel": "CHECKOUT_DIRECT_PAY", "psp": psp_name, "sandbox": settings.ZARVON_SANDBOX_MODE},
-                is_demo=settings.ZARVON_SANDBOX_MODE,
-            )
+            if settings.ZARVON_SANDBOX_MODE:
+                ext_id = f"PAY-{uuid.uuid4().hex[:10].upper()}"
+                PaymentRecord.objects.create(
+                    payment_intent_id=ext_id,
+                    provider=psp_name,
+                    user=request.user,
+                    order=master,
+                    amount=total_amount,
+                    status="SUCCEEDED",
+                    reconciliation_ref=f"REC-{order_num}",
+                    is_demo=True,
+                )
+                PspTransaction.objects.create(
+                    psp_provider=psp_name,
+                    external_trans_id=ext_id,
+                    merchant_trans_id=order_num,
+                    action_stage="PERFORMED",
+                    amount_tiyin=int(total_amount) * 100,
+                    state_code=2,
+                    signature_verified=True,
+                    idempotency_key=f"direct-{ext_id}",
+                    order=master,
+                    raw_payload_sanitized={"channel": "CHECKOUT_DIRECT_PAY", "psp": psp_name, "sandbox": True},
+                    is_demo=True,
+                )
             finance_result = {**(finance_result or {}), "psp_checkout": build_psp_checkout_payload(psp_provider=psp_name, reference=order_num, amount_uzs=total_amount)}
 
         if not items_input:
@@ -519,7 +524,7 @@ class CheckoutView(APIView):
             body_masked=f"Buyurtma summasi: {total_amount:,} so‘m. Yetkazib berishda OTP koddan foydalaning.",
         )
         AuditLog.record(actor=request.user, action="ORDER_CREATED", object_type="Order", object_id=master.id, reason=f"Kanal: {payment_channel}", after={"order_number": order_num, "total_amount": total_amount})
-        return Response({"ok": True, "order_id": str(master.id), "order_number": order_num, "sub_orders": sub_orders_out, "finance": finance_result, "total_amount": total_amount}, status=status.HTTP_201_CREATED)
+        return Response({"ok": True, "order_id": str(master.id), "order_number": order_num, "order_status": master.status, "sandbox_mode": bool(settings.ZARVON_SANDBOX_MODE), "sub_orders": sub_orders_out, "finance": finance_result, "total_amount": total_amount}, status=status.HTTP_201_CREATED)
 
 
 class OrdersListView(APIView):

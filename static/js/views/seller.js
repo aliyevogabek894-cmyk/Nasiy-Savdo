@@ -124,13 +124,24 @@ export async function renderSellerPortalView(container, refreshAuthCallback) {
       <div class="state-box">
         <span class="badge badge-danger">⛔ Sotuvchi kabinetiga kirish cheklangan</span>
         <h2 class="mt-2">Sotuvchi (Seller Owner / Seller Staff) sifatida kiring</h2>
-        <p class="text-muted">Yuqoridagi “Kirish / Rol” tugmasi orqali <strong>Sardor Alimov (TexnoUz)</strong> yoki <strong>Dilshod Xasanov (Xodim)</strong> rolini tanlang.</p>
+        <p class="text-muted">${
+          AppState.sandboxMode
+            ? `Yuqoridagi “Kirish / Rol” tugmasi orqali <strong>Sardor Alimov (TexnoUz)</strong> yoki <strong>Dilshod Xasanov (Xodim)</strong> rolini tanlang.`
+            : "Do‘koningizni boshqarish uchun sotuvchi hisobingiz bilan tizimga kiring."
+        }</p>
         <div class="flex-gap mt-3" style="justify-content:center;">
-          <button id="sw-seller-btn" class="btn btn-primary">🏪 TexnoUz Seller sifatida kirish</button>
+          ${
+            AppState.sandboxMode
+              ? `<button id="sw-seller-btn" class="btn btn-primary">🏪 TexnoUz Seller sifatida kirish</button>`
+              : `<button id="seller-login-btn" class="btn btn-primary">👤 Sotuvchi sifatida kirish</button>`
+          }
           <a href="#seller-onboarding" class="btn btn-outline">Taklifnoma orqali qo‘shilish</a>
         </div>
       </div>
     `;
+    document.getElementById("seller-login-btn")?.addEventListener("click", () => {
+      document.getElementById("btn-role-switcher")?.click();
+    });
     document.getElementById("sw-seller-btn")?.addEventListener("click", async () => {
       await apiFetch("/api/v1/auth/demo-switch/", { method: "POST", body: JSON.stringify({ role: "SELLER_OWNER" }) });
       await refreshAuthCallback();
@@ -542,11 +553,11 @@ export async function renderSellerPortalView(container, refreshAuthCallback) {
             </div>
             <div class="form-group">
               <label class="form-label" for="ex-url">Allowlisted API URL</label>
-              <input id="ex-url" class="form-control" value="https://api.sandbox-erp.uz/v1/catalog">
+              <input id="ex-url" class="form-control" value="${AppState.sandboxMode ? "https://api.sandbox-erp.uz/v1/catalog" : ""}" placeholder="https://api.example.uz/v1/catalog">
             </div>
             <div class="form-group">
               <label class="form-label" for="ex-key">API Key (shifrlanadi)</label>
-              <input id="ex-key" type="password" class="form-control" value="sk_live_sandbox_123456">
+              <input id="ex-key" type="password" class="form-control" value="${AppState.sandboxMode ? "sk_live_sandbox_123456" : ""}" placeholder="API kalitni kiriting">
             </div>
           </div>
           <button type="submit" class="btn btn-primary btn-sm">Integratsiya qo‘shish</button>

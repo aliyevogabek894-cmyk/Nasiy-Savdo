@@ -33,6 +33,12 @@ PAYNET_PASSWORD = os.environ.get("PAYNET_PASSWORD", "zarvon-paynet-sandbox-pass"
 PAYNET_ALLOWED_IPS = os.environ.get("PAYNET_ALLOWED_IPS", "")
 UZUM_SERVICE_ID = os.environ.get("UZUM_SERVICE_ID", "49210" if ZARVON_SANDBOX_MODE else "")
 UZUM_SECRET_KEY = os.environ.get("UZUM_SECRET_KEY", "zarvon-uzum-sandbox-secret" if ZARVON_SANDBOX_MODE else "")
+ESKIZ_EMAIL = os.environ.get("ESKIZ_EMAIL", "")
+ESKIZ_PASSWORD = os.environ.get("ESKIZ_PASSWORD", "")
+ESKIZ_FROM = os.environ.get("ESKIZ_FROM", "4546")
+PLAYMOBILE_URL = os.environ.get("PLAYMOBILE_URL", "")
+PLAYMOBILE_USERNAME = os.environ.get("PLAYMOBILE_USERNAME", "")
+PLAYMOBILE_PASSWORD = os.environ.get("PLAYMOBILE_PASSWORD", "")
 KATM_API_URL = os.environ.get("KATM_API_URL", "")
 MIB_API_URL = os.environ.get("MIB_API_URL", "")
 

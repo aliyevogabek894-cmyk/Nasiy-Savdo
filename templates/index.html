@@ -8,7 +8,7 @@
   <title>ZARVON — Ko‘p sotuvchili Marketplace va Shaffof Muddatli To‘lov</title>
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="icon" type="image/svg+xml" href="{% static 'icons/zarvon-icon.svg' %}">
-  <link rel="stylesheet" href="{% static 'css/design-system.css' %}?v=20261115v1">
+  <link rel="stylesheet" href="{% static 'css/design-system.css' %}?v=20261116v1">
 </head>
 <body>
   <a href="#main-content" class="skip-link">Asosiy kontentga o‘tish</a>
@@ -28,7 +28,7 @@
           <span aria-hidden="true">▾</span>
         </button>
         <button type="button" id="btn-open-pvz-list" class="utility-link">Topshirish punktlari (BTS &amp; PVZ)</button>
-        <span class="utility-sandbox-chip hide-mobile" data-i18n="sandbox_notice" title="Barcha nasiya va bank takliflari sinov rejimida ishlaydi">🛡 Demo/Sandbox rejimi</span>
+        <span id="sandbox-top-chip" class="utility-sandbox-chip hide-mobile hidden" data-i18n="sandbox_notice" title="Barcha nasiya va bank takliflari sinov rejimida ishlaydi">🛡 Demo/Sandbox rejimi</span>
       </div>
       <div class="utility-right-links">
         <a href="#seller-onboarding" class="utility-link highlight">Sotuvchi bo‘lish</a>
@@ -150,7 +150,7 @@
         <div class="footer-brand">ZARVON</div>
         <p class="text-muted text-sm">
           Ko‘p sotuvchili marketplace va 2027-yil standartlariga mos shaffof muddatli to‘lov (nasiya) ekotizimi.
-          Demo/Sandbox muhitida real kredit berilmaydi va mijoz puli qabul qilinmaydi.
+          <span id="footer-sandbox-note" class="hidden">Demo/Sandbox muhitida real kredit berilmaydi va mijoz puli qabul qilinmaydi.</span>
         </p>
       </div>
       <div>
@@ -191,6 +191,6 @@
   <div id="modal-root" class="modal-backdrop hidden" role="dialog" aria-modal="true"></div>
   <div id="toast-root" class="toast-stack" aria-live="polite"></div>
 
-  <script type="module" src="{% static 'js/app.js' %}?v=20261115v1"></script>
+  <script type="module" src="{% static 'js/app.js' %}?v=20261116v1"></script>
 </body>
 </html>

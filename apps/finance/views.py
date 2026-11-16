@@ -181,7 +181,7 @@ class KycAndScoringView(APIView):
         monthly_income_uzs = int(request.data.get("monthly_income_uzs") or 8_000_000)
         requested_purchase_uzs = max(0, int(request.data.get("requested_purchase_uzs") or 0))
         requested_months = min(12, max(1, int(request.data.get("requested_months") or 12)))
-        scenario = (request.data.get("scenario") or "auto").strip()
+        scenario = (request.data.get("scenario") or "auto").strip() if settings.ZARVON_SANDBOX_MODE else "auto"
         liveness_ok = bool(request.data.get("liveness_passed", True))
         if len(pinfl) != 14 or not pinfl.isdigit() or len(passport) < 8:
             return Response({"detail": "14 xonali PINFL va pasport/ID seriya raqamini to‘g‘ri kiriting."}, status=status.HTTP_400_BAD_REQUEST)
@@ -212,7 +212,7 @@ class KycAndScoringView(APIView):
 
         IdentityCheck.objects.create(
             user=user,
-            provider="MyID + INN Sandbox",
+            provider="MyID + INN Sandbox" if settings.ZARVON_SANDBOX_MODE else "MyID + OneID",
             liveness_passed=liveness_ok,
             status="VERIFIED" if liveness_ok else "FAILED",
             correlation_id=f"MYID-{uuid.uuid4().hex[:8].upper()}",
@@ -1282,7 +1282,11 @@ class PspCheckoutAndSimulatorView(APIView):
         if not settings.ZARVON_SANDBOX_MODE:
             # In strict production mode without sandbox, return signed checkout parameters instead of auto-settling.
             return Response(
-                {**checkout_payload, "mode": "LIVE_CHECKOUT_INTENT"},
+                {
+                    **checkout_payload,
+                    "mode": "LIVE_CHECKOUT_INTENT",
+                    "detail": f"{psp_provider} orqali {req_amount:,} so‘m to‘lov sahifasiga o‘ting.",
+                },
                 status=status.HTTP_200_OK,
             )
 

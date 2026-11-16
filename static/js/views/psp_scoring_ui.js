@@ -101,7 +101,7 @@ export function renderKatmMibDstiReportHtml(rep, creditPolicy = null) {
         </div>
         <div style="text-align:right;">
           ${statusBadge(rep.decision)}
-          <div class="text-xs text-muted mt-1">${rep.is_demo ? "Sandbox Adapter Demo" : "Live Bureau"}</div>
+          <div class="text-xs text-muted mt-1">${rep.is_demo ? "Sandbox Adapter" : "Rasmiy kredit byurosi"}</div>
         </div>
       </div>
 
@@ -219,15 +219,15 @@ export function renderSavedCardsHtml(cards = []) {
       </div>
 
       <form id="add-card-form" class="card" style="background:var(--navy-50);">
-        <h4 class="mb-2">+ Yangi karta ulash (Sandbox Tokenizatsiya)</h4>
+        <h4 class="mb-2">+ Yangi karta ulash${AppState.sandboxMode ? " (Sandbox Tokenizatsiya)" : ""}</h4>
         <div class="grid-3">
           <div class="form-group">
             <label class="form-label" for="card-num">16 xonali karta raqami</label>
-            <input id="card-num" class="form-control tabular" maxlength="19" placeholder="8600 1234 5678 9012" value="8600 5500 1122 4488">
+            <input id="card-num" class="form-control tabular" maxlength="19" placeholder="8600 1234 5678 9012" value="${AppState.sandboxMode ? "8600 5500 1122 4488" : ""}">
           </div>
           <div class="form-group">
             <label class="form-label" for="card-exp">Muddati (MM/YY)</label>
-            <input id="card-exp" class="form-control tabular" maxlength="5" placeholder="08/28" value="08/28">
+            <input id="card-exp" class="form-control tabular" maxlength="5" placeholder="08/28" value="${AppState.sandboxMode ? "08/28" : ""}">
           </div>
           <div class="form-group">
             <label class="form-label" for="card-psp">PSP shlyuzi</label>
@@ -350,7 +350,11 @@ export function openPspPayModal({ reference, contractId = null, suggestedAmount,
   openModal(
     `To‘lov o‘tkazish — ${reference}`,
     `
-      <div class="text-xs text-muted mb-3">Sandbox PSP shlyuzi orqali real Click/Payme protokoli tekshiriladi va jadval yangilanadi.</div>
+      <div class="text-xs text-muted mb-3">${
+        AppState.sandboxMode
+          ? "Sandbox PSP shlyuzi orqali real Click/Payme protokoli tekshiriladi va jadval yangilanadi."
+          : "Tanlangan to‘lov tizimi orqali xavfsiz to‘lov sahifasiga o‘tasiz; to‘lov tasdiqlangach qarzdorlik avtomatik kamayadi."
+      }</div>
       <div class="psp-select-grid mb-3" id="psp-opt-grid">
         ${providers
       .map(
@@ -378,14 +382,16 @@ export function openPspPayModal({ reference, contractId = null, suggestedAmount,
         <input id="psp-amt-in" type="number" class="form-control tabular" value="${suggestedAmount}" min="1000">
       </div>
 
-      ${allowEarly && contractId
+      ${allowEarly && contractId && AppState.sandboxMode
       ? `<label class="flex-gap text-sm mb-3"><input type="checkbox" id="psp-early-chk"> Muddatidan oldin qisman/to‘liq yopish (0% komissiya va jarima yo‘q)</label>`
       : ""
     }
 
       <div id="psp-modal-trace" class="mb-3"></div>
       <div class="flex-gap">
-        <button id="psp-confirm-btn" class="btn btn-gold" style="flex:1;">⚡ To‘lovni tasdiqlash (Sandbox)</button>
+        <button id="psp-confirm-btn" class="btn btn-gold" style="flex:1;">${
+          AppState.sandboxMode ? "⚡ To‘lovni tasdiqlash (Sandbox)" : "💳 To‘lov sahifasiga o‘tish"
+        }</button>
         <button id="psp-cancel-btn" class="btn btn-outline">Bekor qilish</button>
       </div>
     `
@@ -409,7 +415,7 @@ export function openPspPayModal({ reference, contractId = null, suggestedAmount,
       let msg = "";
       let traceHtml = "";
       let paymentId = null;
-      if (isEarly && contractId) {
+      if (isEarly && contractId && AppState.sandboxMode) {
         const er = await apiFetch(`/api/v1/finance/contracts/${contractId}/repay/`, {
           method: "POST",
           body: JSON.stringify({
@@ -427,11 +433,17 @@ export function openPspPayModal({ reference, contractId = null, suggestedAmount,
           body: JSON.stringify({ reference, psp_provider: selectedPsp, amount_uzs: amt, card_id: chosenCard }),
         });
         paymentId = res.payment_id || null;
-        msg = res.detail;
+        msg = res.detail || `${selectedPsp} to‘lov sahifasi tayyor.`;
+        const isLiveIntent = res.mode === "LIVE_CHECKOUT_INTENT";
         const linkBtn = res.checkout_url
-          ? `<div class="mt-2 mb-2"><a href="${esc(res.checkout_url)}" target="_blank" rel="noopener" class="btn btn-outline btn-sm">🔗 ${esc(selectedPsp)} Checkout havolasini ochish</a></div>`
+          ? `<div class="mt-2 mb-2"><a href="${esc(res.checkout_url)}" target="_blank" rel="noopener" class="btn ${isLiveIntent ? "btn-primary" : "btn-outline btn-sm"}">${
+              isLiveIntent ? `💳 ${esc(selectedPsp)} orqali ${fmtUzs(amt)} to‘lash` : `🔗 ${esc(selectedPsp)} Checkout havolasini ochish`
+            }</a></div>`
           : "";
-        traceHtml = `${linkBtn}<pre class="text-xs" style="background:var(--bg-subtle);padding:8px;border-radius:8px;overflow:auto;max-height:160px;">${esc(JSON.stringify(res.trace, null, 2))}</pre>`;
+        const tracePre = Array.isArray(res.trace) && res.trace.length
+          ? `<pre class="text-xs" style="background:var(--bg-subtle);padding:8px;border-radius:8px;overflow:auto;max-height:160px;">${esc(JSON.stringify(res.trace, null, 2))}</pre>`
+          : "";
+        traceHtml = `${linkBtn}${tracePre}`;
       }
       const receiptBtn = paymentId
         ? `<div class="mt-2 mb-2"><button type="button" id="psp-open-receipt-btn" class="btn btn-primary btn-sm">🧾 Elektron chekni ochish</button></div>`

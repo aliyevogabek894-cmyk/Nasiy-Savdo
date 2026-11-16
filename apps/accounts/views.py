@@ -10,6 +10,7 @@ from rest_framework.views import APIView
 from config.permissions import ADMIN_ROLES, HasRolePermission, require_recent_mfa
 from config.utils import generate_otp_code, hash_token, mask_value
 from apps.accounts.models import MakerCheckerRequest, OtpChallenge, Profile, User, UserRole, UserSession
+from apps.accounts.sms import send_otp_sms
 from apps.governance.models import AuditLog, NotificationEvent, SecurityEvent
 
 
@@ -62,12 +63,20 @@ class MeView(APIView):
                 for u in User.objects.filter(is_active=True).order_by("role", "full_name")[:20]
             ]
         if not request.user.is_authenticated:
-            return Response({"authenticated": False, "user": None, "demo_accounts": demo_accounts})
+            return Response(
+                {
+                    "authenticated": False,
+                    "user": None,
+                    "sandbox_mode": bool(settings.ZARVON_SANDBOX_MODE),
+                    "demo_accounts": demo_accounts,
+                }
+            )
         return Response(
             {
                 "authenticated": True,
                 "user": serialize_user(request.user),
                 "mfa_verified": bool(request.session.get("mfa_verified", False)),
+                "sandbox_mode": bool(settings.ZARVON_SANDBOX_MODE),
                 "demo_accounts": demo_accounts,
             }
         )
@@ -105,12 +114,23 @@ class RequestOtpView(APIView):
             demo_hint=code if settings.ZARVON_SANDBOX_MODE else "",
             expires_at=timezone.now() + timezone.timedelta(minutes=5),
         )
+        sms_res = send_otp_sms(target, code)
+        msg = (
+            "Tasdiqlash kodi telefoningizga SMS orqali yuborildi."
+            if sms_res.get("sent")
+            else (
+                "Tasdiqlash kodi yaratildi (Sandbox/Demo rejimida kod ekranda ko‘rsatiladi)."
+                if settings.ZARVON_SANDBOX_MODE
+                else "Tasdiqlash kodi yaratildi."
+            )
+        )
         return Response(
             {
                 "challenge_id": str(challenge.id),
                 "expires_in_seconds": 300,
+                "sms_provider": sms_res.get("provider"),
                 "demo_otp_preview": code if settings.ZARVON_SANDBOX_MODE else None,
-                "message": "Tasdiqlash kodi yuborildi (Sandbox/Demo rejimida kod ekranda ko‘rsatiladi).",
+                "message": msg,
             }
         )
 
@@ -248,7 +268,12 @@ class VerifyMfaView(APIView):
     def post(self, request):
         code = (request.data.get("code") or "").strip()
         if len(code) != 6 or not code.isdigit():
-            return Response({"detail": "6 xonali MFA kodini kiriting (masalan: 123456 sandbox uchun)."}, status=status.HTTP_400_BAD_REQUEST)
+            detail = (
+                "6 xonali MFA kodini kiriting (masalan: 123456 sandbox uchun)."
+                if settings.ZARVON_SANDBOX_MODE
+                else "6 xonali MFA tasdiqlash kodini kiriting."
+            )
+            return Response({"detail": detail}, status=status.HTTP_400_BAD_REQUEST)
         request.session["mfa_verified"] = True
         AuditLog.record(actor=request.user, action="MFA_VERIFIED", object_type="User", object_id=request.user.id, reason="Kritik amal uchun qayta autentifikatsiya")
         return Response({"ok": True, "mfa_verified": True})

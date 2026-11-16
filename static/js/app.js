@@ -75,13 +75,19 @@ async function refreshAuth() {
     AppState.authenticated = me.authenticated;
     AppState.user = me.user;
     AppState.mfaVerified = Boolean(me.mfa_verified);
+    AppState.sandboxMode = Boolean(me.sandbox_mode);
     AppState.demoAccounts = me.demo_accounts || [];
+
+    document.getElementById("sandbox-top-chip")?.classList.toggle("hidden", !AppState.sandboxMode);
+    document.getElementById("footer-sandbox-note")?.classList.toggle("hidden", !AppState.sandboxMode);
 
     const roleBtn = document.getElementById("current-role-badge");
     if (roleBtn) {
       roleBtn.textContent = me.authenticated
         ? `👤 ${me.user.full_name.split(" ")[0]} (${me.user.role_label})`
-        : "👤 Kirish / Rol";
+        : AppState.sandboxMode
+        ? "👤 Kirish / Rol"
+        : "👤 Kirish";
     }
     if (me.authenticated) {
       const w = await apiFetch("/api/v1/catalog/wishlists/").catch(() => ({ results: [] }));
@@ -96,18 +102,25 @@ async function refreshAuth() {
 }
 
 function openAuthAndRoleModal() {
-  const demoHtml = AppState.demoAccounts
-    .map(
-      (u) => `
+  const showDemoSwitcher = AppState.sandboxMode && (AppState.demoAccounts || []).length > 0;
+  const demoHtml = showDemoSwitcher
+    ? AppState.demoAccounts
+        .map(
+          (u) => `
       <button class="btn btn-outline btn-sm" style="justify-content:space-between;width:100%;margin-bottom:6px;" data-demo-phone="${esc(u.phone)}">
         <span><strong>${esc(u.full_name)}</strong> (${esc(u.phone)})</span>
         <span class="badge badge-navy">${esc(u.role_label)}</span>
       </button>`
-    )
-    .join("");
+        )
+        .join("")
+    : "";
 
   openModal(
-    AppState.authenticated ? `Hisob: ${AppState.user.full_name}` : "ZARVON Tizimiga Kirish (Password / OTP / Demo)",
+    AppState.authenticated
+      ? `Hisob: ${AppState.user.full_name}`
+      : AppState.sandboxMode
+      ? "ZARVON Tizimiga Kirish (Password / OTP / Demo)"
+      : "ZARVON — Shaxsiy kabinetga kirish",
     `
       ${
         AppState.authenticated
@@ -122,16 +135,16 @@ function openAuthAndRoleModal() {
       }
 
       <div class="card mb-3" style="background:var(--navy-50);">
-        <h4 style="margin-bottom:8px;">Telefon va OTP / Parol bilan kirish</h4>
+        <h4 style="margin-bottom:8px;">Telefon raqami va SMS OTP / Parol bilan kirish</h4>
         <form id="modal-login-form">
           <div class="grid-2">
             <div class="form-group">
               <label class="form-label" for="lg-phone">Telefon</label>
-              <input id="lg-phone" class="form-control" value="+998901110001" placeholder="+998 90 123 45 67">
+              <input id="lg-phone" class="form-control" value="${AppState.sandboxMode ? "+998901110001" : ""}" placeholder="+998 90 123 45 67">
             </div>
             <div class="form-group">
               <label class="form-label" for="lg-pass">Parol (yoki OTP)</label>
-              <input id="lg-pass" type="password" class="form-control" value="Zarvon2026!">
+              <input id="lg-pass" type="password" class="form-control" value="${AppState.sandboxMode ? "Zarvon2026!" : ""}" placeholder="Parolni kiriting">
             </div>
           </div>
           <div id="lg-identity-box" class="text-xs mb-2" style="padding:7px 10px; border-radius:8px; background:var(--bg-surface); border:1px solid var(--border-color);">
@@ -143,7 +156,7 @@ function openAuthAndRoleModal() {
           </div>
           <div class="flex-gap">
             <button type="submit" class="btn btn-primary btn-sm">Parol bilan kirish</button>
-            <button type="button" id="lg-otp-req" class="btn btn-outline btn-sm">OTP kod so‘rash</button>
+            <button type="button" id="lg-otp-req" class="btn btn-outline btn-sm">SMS OTP kod so‘rash</button>
           </div>
           <div id="lg-otp-box" class="mt-2 hidden">
             <div class="flex-gap">
@@ -155,10 +168,14 @@ function openAuthAndRoleModal() {
         </form>
       </div>
 
-      <div>
-        <h4>Tezkor Sandbox Rol Almashuvi (Barcha rollarni sinash uchun)</h4>
-        <div style="max-height:260px;overflow-y:auto;">${demoHtml}</div>
-      </div>
+      ${
+        showDemoSwitcher
+          ? `<div>
+               <h4>Tezkor Sandbox Rol Almashuvi (Barcha rollarni sinash uchun)</h4>
+               <div style="max-height:260px;overflow-y:auto;">${demoHtml}</div>
+             </div>`
+          : ""
+      }
     `,
     () => {
       let currentChallengeId = null;
@@ -235,7 +252,9 @@ function openAuthAndRoleModal() {
           });
           currentChallengeId = res.challenge_id;
           document.getElementById("lg-otp-box").classList.remove("hidden");
-          document.getElementById("lg-otp-hint").textContent = `Sandbox OTP kod: ${res.demo_otp_preview}`;
+          document.getElementById("lg-otp-hint").textContent = res.demo_otp_preview
+            ? `Sandbox OTP kod: ${res.demo_otp_preview}`
+            : res.message || "Tasdiqlash kodi telefoningizga yuborildi.";
         } catch (err) {
           showToast(err.message, "error");
         }

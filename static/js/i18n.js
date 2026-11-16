@@ -56,6 +56,7 @@ export const AppState = {
   user: null,
   authenticated: false,
   mfaVerified: false,
+  sandboxMode: false,
   demoAccounts: [],
   cartCount: 0,
   cartQtyMap: {},

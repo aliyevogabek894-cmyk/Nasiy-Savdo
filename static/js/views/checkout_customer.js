@@ -14,8 +14,14 @@ function requireLoginPrompt(container) {
   container.innerHTML = `
     <div class="state-box">
       <h2>Shaxsiy kabinet va kassa uchun tizimga kiring</h2>
-      <p class="text-muted">Demo rejimida yuqoridagi “Kirish / Rol” tugmasi orqali <strong>Customer (Azizbek Karimov)</strong> yoki boshqa rolni bir bosishda tanlashingiz mumkin.</p>
-      <button id="prompt-login-btn" class="btn btn-primary mt-2">👤 Kirish / Demo rol tanlash</button>
+      <p class="text-muted">${
+        AppState.sandboxMode
+          ? `Demo rejimida yuqoridagi “Kirish / Rol” tugmasi orqali <strong>Customer (Azizbek Karimov)</strong> yoki boshqa rolni bir bosishda tanlashingiz mumkin.`
+          : "Buyurtma berish, nasiya limitini ko‘rish va to‘lov cheklarini ochish uchun telefon raqamingiz bilan tizimga kiring."
+      }</p>
+      <button id="prompt-login-btn" class="btn btn-primary mt-2">${
+        AppState.sandboxMode ? "👤 Kirish / Demo rol tanlash" : "👤 Tizimga kirish"
+      }</button>
     </div>
   `;
   document.getElementById("prompt-login-btn")?.addEventListener("click", () => {
@@ -269,7 +275,7 @@ export async function renderCheckoutView(container, reloadCartBadge) {
                 💳 ZARVON Nasiya (≤12 oy)
               </button>
               <button type="button" class="btn ${paymentChannel === "BANK_GATEWAY" ? "btn-primary" : "btn-outline"}" data-ch="BANK_GATEWAY" ${installmentLocked ? "disabled" : ""}>
-                🏦 Multi-Bank Gateway (Sandbox)
+                🏦 Bank krediti${AppState.sandboxMode ? " (Sandbox)" : ""}
               </button>
               <button type="button" class="btn ${paymentChannel === "DIRECT_PAY" ? "btn-primary" : "btn-outline"}" data-ch="DIRECT_PAY">
                 💵 Click / Payme / Uzum / Karta
@@ -286,7 +292,7 @@ export async function renderCheckoutView(container, reloadCartBadge) {
                 ? `
               <div class="card" style="background:var(--navy-50);">
                 <div class="flex-between mb-2">
-                  <strong>Sizning bo‘sh nasiya limitingiz (DEMO):</strong>
+                  <strong>Sizning bo‘sh nasiya limitingiz${AppState.sandboxMode ? " (DEMO)" : ""}:</strong>
                   <span class="badge badge-navy tabular">${fmtUzs(cabinet.limit.available_limit_uzs)} (${esc(cabinet.limit.tier)})</span>
                 </div>
                 <div class="grid-2">
@@ -322,7 +328,7 @@ export async function renderCheckoutView(container, reloadCartBadge) {
                 : paymentChannel === "BANK_GATEWAY"
                 ? `
               <div class="card" style="background:var(--navy-50);">
-                <span class="badge badge-gold mb-2">Multi-Bank Sandbox Gateway (8-bo‘lim)</span>
+                <span class="badge badge-gold mb-2">Multi-Bank Kredit Ariza Tizimi${AppState.sandboxMode ? " (Sandbox)" : ""}</span>
                 <p class="text-sm">Arizangiz bir vaqtda hamkor banklarga correlation ID bilan yuboriladi. Bir bank ishlamasa ham boshqa banklar taklif qaytaradi.</p>
                 <div class="form-group">
                   <label class="form-label" for="chk-months">So‘raladigan muddat</label>
@@ -336,7 +342,7 @@ export async function renderCheckoutView(container, reloadCartBadge) {
             `
                 : `
               <div class="card" style="background:var(--navy-50);">
-                <label class="form-label">Mahalliy to‘lov tizimini tanlang (Sandbox PSP)</label>
+                <label class="form-label">To‘lov tizimini tanlang${AppState.sandboxMode ? " (Sandbox PSP)" : ""}</label>
                 <div class="psp-select-grid mt-2">
                   ${["Payme", "Click", "Uzum Bank", "Paynet", "Uzcard/Humo"]
                     .map((p) => {
@@ -368,7 +374,7 @@ export async function renderCheckoutView(container, reloadCartBadge) {
             <div class="card mb-3" style="background:var(--gold-100);border-color:var(--gold-500);">
               <h4 style="margin-bottom:6px;">Oddiy va shaffof shartnoma xulosasi (30.4)</h4>
               <ul class="text-sm" style="margin:0;padding-left:18px;">
-                <li>Tanlangan usul: <strong>${esc(paymentChannel === "ZARVON_NASIYA" ? `ZARVON Nasiya (${months} oy)` : paymentChannel === "BANK_GATEWAY" ? "Multi-Bank Gateway (Sandbox)" : pspProvider)}</strong></li>
+                <li>Tanlangan usul: <strong>${esc(paymentChannel === "ZARVON_NASIYA" ? `ZARVON Nasiya (${months} oy)` : paymentChannel === "BANK_GATEWAY" ? `Hamkor banklar (${months} oy)` : pspProvider)}</strong></li>
                 <li>Tovar naqd qiymati: <strong class="tabular">${fmtUzs(netTotal)}</strong></li>
                 ${
                   paymentChannel === "ZARVON_NASIYA" && latestCalc
@@ -398,8 +404,8 @@ export async function renderCheckoutView(container, reloadCartBadge) {
             <div class="form-group">
               <label class="form-label" for="chk-sign-method">Tasdiqlash / Imzolash usuli</label>
               <select id="chk-sign-method" class="form-control">
-                <option value="OTP">SMS OTP kod orqali tasdiqlash (Sandbox)</option>
-                <option value="E_IMZO">E-IMZO elektron kalit orqali (Sandbox)</option>
+                <option value="OTP">SMS OTP kod orqali tasdiqlash${AppState.sandboxMode ? " (Sandbox)" : ""}</option>
+                <option value="E_IMZO">E-IMZO elektron kalit orqali${AppState.sandboxMode ? " (Sandbox)" : ""}</option>
               </select>
             </div>
 
@@ -568,7 +574,7 @@ export async function renderCheckoutView(container, reloadCartBadge) {
             delivery_address: deliveryAddress,
             delivery_point_id: deliveryPointId,
             payment_channel: paymentChannel,
-            payment_method_label: paymentChannel === "DIRECT_PAY" ? `${pspProvider} (Sandbox)` : paymentChannel,
+            payment_method_label: paymentChannel === "DIRECT_PAY" ? (AppState.sandboxMode ? `${pspProvider} (Sandbox)` : pspProvider) : paymentChannel,
             psp_provider: pspProvider,
             plan_id: latestCalc?.plan_id,
             down_payment: downPayment,
@@ -622,18 +628,30 @@ export async function renderCheckoutView(container, reloadCartBadge) {
             }
             ${
               paymentChannel === "DIRECT_PAY"
-                ? `<div class="card mt-3" style="text-align:left;background:var(--bg-subtle);">
-                     <div class="flex-between">
-                       <strong>⚡ ${esc(pspProvider)} Gateway Sandbox Protokoli (${fmtUzs(res.total_amount || netTotal)})</strong>
-                       <button id="chk-run-psp-sim" class="btn btn-gold btn-sm">Click / Payme / Uzum Protokolini Sinash</button>
-                     </div>
-                     ${
-                       res.finance?.psp_checkout?.checkout_url
-                         ? `<div class="mt-2"><a href="${esc(res.finance.psp_checkout.checkout_url)}" target="_blank" rel="noopener" class="btn btn-outline btn-sm">🔗 ${esc(pspProvider)} to‘lov havolasini ochish</a></div>`
-                         : ""
-                     }
-                     <div id="chk-psp-trace" class="text-xs mt-2 text-muted">Buyurtma rasmiylashtirildi. Yuqoridagi tugma bilan to‘lov shlyuzining real Prepare/Complete, JSON-RPC 2.0 yoki Uzum /check→/create→/confirm izini tekshiring.</div>
-                   </div>`
+                ? AppState.sandboxMode
+                  ? `<div class="card mt-3" style="text-align:left;background:var(--bg-subtle);">
+                       <div class="flex-between">
+                         <strong>⚡ ${esc(pspProvider)} Gateway Sandbox Protokoli (${fmtUzs(res.total_amount || netTotal)})</strong>
+                         <button id="chk-run-psp-sim" class="btn btn-gold btn-sm">Click / Payme / Uzum Protokolini Sinash</button>
+                       </div>
+                       ${
+                         res.finance?.psp_checkout?.checkout_url
+                           ? `<div class="mt-2"><a href="${esc(res.finance.psp_checkout.checkout_url)}" target="_blank" rel="noopener" class="btn btn-outline btn-sm">🔗 ${esc(pspProvider)} to‘lov havolasini ochish</a></div>`
+                           : ""
+                       }
+                       <div id="chk-psp-trace" class="text-xs mt-2 text-muted">Buyurtma rasmiylashtirildi. Yuqoridagi tugma bilan to‘lov shlyuzining real Prepare/Complete, JSON-RPC 2.0 yoki Uzum /check→/create→/confirm izini tekshiring.</div>
+                     </div>`
+                  : `<div class="card mt-3" style="text-align:left;background:var(--bg-subtle);">
+                       <div class="flex-between" style="flex-wrap:wrap;gap:8px;">
+                         <strong>💳 To‘lovni yakunlash — ${esc(pspProvider)} (${fmtUzs(res.total_amount || netTotal)})</strong>
+                         ${
+                           res.finance?.psp_checkout?.checkout_url
+                             ? `<a href="${esc(res.finance.psp_checkout.checkout_url)}" target="_blank" rel="noopener" class="btn btn-gold btn-sm">🔗 ${esc(pspProvider)} orqali to‘lash</a>`
+                             : ""
+                         }
+                       </div>
+                       <div class="text-xs mt-2 text-muted">Buyurtmangiz yaratildi. Tanlangan to‘lov tizimi orqali to‘lovni tasdiqlaganingizdan so‘ng holat avtomatik yangilanadi.</div>
+                     </div>`
                 : ""
             }
             <div class="flex-gap mt-4" style="justify-content:center;">
@@ -733,7 +751,7 @@ export async function renderCustomerCabinetView(container, initialTab = "nasiya"
         }
         <div class="grid-3 mb-4">
           <div class="kpi-card" style="border-left:4px solid var(--gold-500);">
-            <div class="kpi-label">Bo‘sh nasiya limiti (DEMO • ${esc(cab.limit.tier)})</div>
+            <div class="kpi-label">Bo‘sh nasiya limiti (${AppState.sandboxMode ? "DEMO • " : ""}${esc(cab.limit.tier)})</div>
             <div class="kpi-value tabular">${fmtUzs(cab.limit.available_limit_uzs)}</div>
             <div class="text-xs text-muted tabular">Jami: ${fmtUzs(cab.limit.total_limit_uzs)} • Band: ${fmtUzs(cab.limit.used_limit_uzs)}</div>
           </div>
@@ -980,8 +998,8 @@ export async function renderCustomerCabinetView(container, initialTab = "nasiya"
     } else if (activeTab === "banks") {
       const cab = await apiFetch("/api/v1/finance/cabinet/");
       panel.innerHTML = `
-        <h2 class="mb-2">Multi-Bank Kredit Arizalari (Sandbox Gateway)</h2>
-        <p class="text-xs text-muted mb-3">Bank qarori, ZARVON tavsiyasi va mijoz tanlovi aniq ajratilgan; test takliflar haqiqiy bank shartnomasi emas (8.3).</p>
+        <h2 class="mb-2">Multi-Bank Kredit Arizalari${AppState.sandboxMode ? " (Sandbox Gateway)" : ""}</h2>
+        <p class="text-xs text-muted mb-3">Bank qarori, ZARVON tavsiyasi va mijoz tanlovi aniq ajratilgan${AppState.sandboxMode ? "; test takliflar haqiqiy bank shartnomasi emas (8.3)" : ""}.</p>
         ${
           cab.credit_applications.length
             ? cab.credit_applications
@@ -1005,7 +1023,7 @@ export async function renderCustomerCabinetView(container, initialTab = "nasiya"
                                .map(
                                  (of) => `
                                <tr>
-                                 <td><strong>${esc(of.bank_name)}</strong> <span class="badge badge-gold">DEMO</span></td>
+                                 <td><strong>${esc(of.bank_name)}</strong>${AppState.sandboxMode ? ` <span class="badge badge-gold">DEMO</span>` : ""}</td>
                                  <td>${of.months} oy</td>
                                  <td>${of.annual_rate_pct}% / ${of.total_cost_of_credit_pct}%</td>
                                  <td>${fmtUzs(of.mandatory_commission)}</td>
@@ -1073,22 +1091,26 @@ export async function renderCustomerCabinetView(container, initialTab = "nasiya"
                   <input id="k-by" type="number" class="form-control tabular" value="1994">
                 </div>
               </div>
-              <div class="grid-2">
+              <div class="${AppState.sandboxMode ? "grid-2" : ""}">
                 <div class="form-group">
                   <label class="form-label" for="k-income">Oylik rasmiy daromad (so‘m)</label>
-                  <input id="k-income" type="number" class="form-control tabular" value="9500000" min="1500000" step="500000">
+                  <input id="k-income" type="number" class="form-control tabular" value="${AppState.sandboxMode ? "9500000" : ""}" placeholder="Masalan: 8000000" min="1500000" step="500000">
                 </div>
-                <div class="form-group">
-                  <label class="form-label" for="k-scen">Sandbox Tekshiruv Ssenariysi</label>
-                  <select id="k-scen" class="form-control">
-                    <option value="auto">Avto (PINFL bo‘yicha)</option>
-                    <option value="clean">✓ Toza tarix (krediti yo‘q — Nasiya ochiq)</option>
-                    <option value="moderate_credit">⚠ Boshqa bankda krediti bor (Faqat naqd savdo)</option>
-                    <option value="high_debt">⚠ Boshqa kreditlar ko‘p (DSTI > 50% — Faqat naqd)</option>
-                    <option value="overdue_katm">⛔ KATM 45 kun kechikish bor (Blok)</option>
-                    <option value="mib_debt">⛔ MIB ijro qarzdorligi aniqlangan (Blok)</option>
-                  </select>
-                </div>
+                ${
+                  AppState.sandboxMode
+                    ? `<div class="form-group">
+                         <label class="form-label" for="k-scen">Sandbox Tekshiruv Ssenariysi</label>
+                         <select id="k-scen" class="form-control">
+                           <option value="auto">Avto (PINFL bo‘yicha)</option>
+                           <option value="clean">✓ Toza tarix (krediti yo‘q — Nasiya ochiq)</option>
+                           <option value="moderate_credit">⚠ Boshqa bankda krediti bor (Faqat naqd savdo)</option>
+                           <option value="high_debt">⚠ Boshqa kreditlar ko‘p (DSTI > 50% — Faqat naqd)</option>
+                           <option value="overdue_katm">⛔ KATM 45 kun kechikish bor (Blok)</option>
+                           <option value="mib_debt">⛔ MIB ijro qarzdorligi aniqlangan (Blok)</option>
+                         </select>
+                       </div>`
+                    : ""
+                }
               </div>
               <div class="mb-3">
                 <label class="flex-gap text-xs"><input type="checkbox" id="k-cons-id" checked> MyID / OneID va Soliq (INN/PINFL) tekshiruviga roziman</label>
@@ -1141,7 +1163,7 @@ export async function renderCustomerCabinetView(container, initialTab = "nasiya"
               passport: document.getElementById("k-pass").value,
               birth_year: Number(document.getElementById("k-by").value),
               monthly_income_uzs: Number(document.getElementById("k-income").value),
-              scenario: document.getElementById("k-scen").value,
+              scenario: document.getElementById("k-scen")?.value || "auto",
               liveness_passed: true,
             }),
           });
